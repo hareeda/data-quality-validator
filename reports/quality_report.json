@@ -1,0 +1,120 @@
+{
+  "total_records": 15,
+  "total_issues": 14,
+  "affected_records": 13,
+  "issues_by_severity": {
+    "MEDIUM": 9,
+    "HIGH": 5
+  },
+  "issues_by_rule": {
+    "potential_duplicate_company": 6,
+    "missing_value": 1,
+    "invalid_country": 1,
+    "negative_revenue": 1,
+    "negative_employee_count": 1,
+    "zero_employee_count": 1,
+    "invalid_credit_score": 1,
+    "unusual_annual_growth": 1,
+    "invalid_website": 1
+  },
+  "issues": [
+    {
+      "company_id": "C005",
+      "company_name": "Silverline Retail",
+      "rule": "missing_value",
+      "severity": "HIGH",
+      "message": "Required field 'revenue' is missing."
+    },
+    {
+      "company_id": "C001",
+      "company_name": "Northstar Technologies",
+      "rule": "potential_duplicate_company",
+      "severity": "MEDIUM",
+      "message": "Company name matches another record after trimming spaces and ignoring case."
+    },
+    {
+      "company_id": "C002",
+      "company_name": "Bluewave Logistics",
+      "rule": "potential_duplicate_company",
+      "severity": "MEDIUM",
+      "message": "Company name matches another record after trimming spaces and ignoring case."
+    },
+    {
+      "company_id": "C004",
+      "company_name": "Northstar Technologies",
+      "rule": "potential_duplicate_company",
+      "severity": "MEDIUM",
+      "message": "Company name matches another record after trimming spaces and ignoring case."
+    },
+    {
+      "company_id": "C005",
+      "company_name": "Silverline Retail",
+      "rule": "potential_duplicate_company",
+      "severity": "MEDIUM",
+      "message": "Company name matches another record after trimming spaces and ignoring case."
+    },
+    {
+      "company_id": "C009",
+      "company_name": "Bluewave Logistics ",
+      "rule": "potential_duplicate_company",
+      "severity": "MEDIUM",
+      "message": "Company name matches another record after trimming spaces and ignoring case."
+    },
+    {
+      "company_id": "C015",
+      "company_name": "Silverline Retail",
+      "rule": "potential_duplicate_company",
+      "severity": "MEDIUM",
+      "message": "Company name matches another record after trimming spaces and ignoring case."
+    },
+    {
+      "company_id": "C007",
+      "company_name": "Oakridge Finance",
+      "rule": "invalid_country",
+      "severity": "HIGH",
+      "message": "Country code 'XX' is not in the approved list."
+    },
+    {
+      "company_id": "C014",
+      "company_name": "Atlas Consulting",
+      "rule": "negative_revenue",
+      "severity": "HIGH",
+      "message": "Revenue cannot be negative under this validation rule."
+    },
+    {
+      "company_id": "C006",
+      "company_name": "Vertex Manufacturing",
+      "rule": "negative_employee_count",
+      "severity": "HIGH",
+      "message": "Employee count cannot be negative."
+    },
+    {
+      "company_id": "C012",
+      "company_name": "Harborview Textiles",
+      "rule": "zero_employee_count",
+      "severity": "MEDIUM",
+      "message": "Company reports zero employees; review whether this is expected."
+    },
+    {
+      "company_id": "C011",
+      "company_name": "Cloudpeak Analytics",
+      "rule": "invalid_credit_score",
+      "severity": "HIGH",
+      "message": "Credit score must be between 0 and 100."
+    },
+    {
+      "company_id": "C010",
+      "company_name": "Meridian Energy",
+      "rule": "unusual_annual_growth",
+      "severity": "MEDIUM",
+      "message": "Annual growth exceeds 100%; verify against the source."
+    },
+    {
+      "company_id": "C008",
+      "company_name": "Sunrise Healthcare",
+      "rule": "invalid_website",
+      "severity": "MEDIUM",
+      "message": "Website does not match the expected HTTP/HTTPS URL format."
+    }
+  ]
+}

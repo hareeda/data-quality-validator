@@ -1,0 +1,16 @@
+company_id,company_name,industry,country,revenue,employee_count,credit_score,annual_growth,registration_date,website
+C001,Northstar Technologies,IT Services,US,12500000.0,450,78,12.5,2015-04-12,https://northstar.example
+C002,Bluewave Logistics,Logistics,IN,8500000.0,320,72,8.2,2018-09-20,https://bluewave.example
+C003,Greenfield Foods,Food Processing,GB,4200000.0,180,81,5.4,2012-02-15,https://greenfield.example
+C004,Northstar Technologies,IT Services,US,12500000.0,450,78,12.5,2015-04-12,https://northstar.example
+C005,Silverline Retail,Retail,IN,,210,65,7.1,2020-06-11,https://silverline.example
+C006,Vertex Manufacturing,Manufacturing,US,18000000.0,-25,88,9.7,2010-11-03,https://vertex.example
+C007,Oakridge Finance,Financial Services,XX,6200000.0,150,74,6.8,2016-03-27,https://oakridge.example
+C008,Sunrise Healthcare,Healthcare,IN,9500000.0,520,91,11.2,2014-08-19,not-a-valid-url
+C009,Bluewave Logistics ,Logistics,IN,8500000.0,320,72,8.2,2018-09-20,https://bluewave.example
+C010,Meridian Energy,Energy,GB,25000000.0,680,83,140.0,2009-01-30,https://meridian.example
+C011,Cloudpeak Analytics,IT Services,US,3100000.0,95,105,14.1,2021-07-08,https://cloudpeak.example
+C012,Harborview Textiles,Textiles,IN,2700000.0,0,61,-8.5,2019-12-04,https://harborview.example
+C013,Evergreen Mobility,Automotive,GB,11200000.0,390,79,10.3,2017-05-22,https://evergreen.example
+C014,Atlas Consulting,Consulting,US,-450000.0,60,69,4.3,2022-02-17,https://atlas.example
+C015,Silverline Retail,Retail,IN,7300000.0,210,65,7.1,2020-06-11,https://silverline.example
