@@ -8,6 +8,7 @@ import streamlit as st
 
 DEFAULT_API_URL = "https://ai-data-quality-validator-api.onrender.com"
 REQUEST_TIMEOUT = 300
+MAX_FILE_SIZE = 10 * 1024 * 1024
 
 
 # --------------------------------------------------
@@ -15,9 +16,10 @@ REQUEST_TIMEOUT = 300
 # --------------------------------------------------
 
 st.set_page_config(
-    page_title="Business Data Quality Intelligence",
+    page_title="Data Quality Intelligence",
     page_icon="📊",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
 
@@ -29,20 +31,29 @@ st.markdown(
     """
     <style>
         .block-container {
-            padding-top: 2rem;
+            padding-top: 1.8rem;
             padding-bottom: 3rem;
-            max-width: 1400px;
+            max-width: 1450px;
         }
 
         div[data-testid="stMetric"] {
-            background-color: rgba(128, 128, 128, 0.08);
-            border: 1px solid rgba(128, 128, 128, 0.2);
+            background-color: rgba(128, 128, 128, 0.07);
+            border: 1px solid rgba(128, 128, 128, 0.18);
             padding: 16px;
             border-radius: 12px;
         }
 
         div[data-testid="stMetricLabel"] {
             font-size: 0.9rem;
+        }
+
+        div[data-testid="stFileUploader"] {
+            border-radius: 12px;
+        }
+
+        .section-intro {
+            color: #737783;
+            font-size: 0.95rem;
         }
     </style>
     """,
@@ -51,28 +62,129 @@ st.markdown(
 
 
 # --------------------------------------------------
+# Session state
+# --------------------------------------------------
+
+if "api_url" not in st.session_state:
+    st.session_state["api_url"] = DEFAULT_API_URL
+
+if "analysis_result" not in st.session_state:
+    st.session_state["analysis_result"] = None
+
+if "analysis_filename" not in st.session_state:
+    st.session_state["analysis_filename"] = None
+
+
+# --------------------------------------------------
+# Header and help guide
+# --------------------------------------------------
+
+header_col, help_col = st.columns([5, 1])
+
+with header_col:
+    st.title("📊 Data Quality Intelligence")
+    st.caption(
+        "Understand your data. Detect quality risks. Discover insights."
+    )
+
+with help_col:
+    with st.popover("❔ Help & Guide", use_container_width=True):
+        st.subheader("Welcome to Data Quality Intelligence")
+
+        st.write(
+            "This application analyzes a CSV dataset, identifies potential "
+            "data quality issues, calculates descriptive statistics, and "
+            "presents evidence and AI-assisted business insights."
+        )
+
+        st.divider()
+        st.markdown("### 1. Upload a dataset")
+        st.write(
+            "Choose a CSV file using the upload area on the main screen. "
+            "The current backend expects company data with the required "
+            "columns. Files must be no larger than 10 MB."
+        )
+
+        st.markdown("### 2. Run the analysis")
+        st.write(
+            "Click **Analyze dataset**. The backend runs validation rules, "
+            "calculates dataset statistics, prepares evidence, and attempts "
+            "to generate business insights."
+        )
+
+        st.markdown("### 3. Understand the overview")
+        st.write(
+            "- **Records analyzed:** number of records processed.\n"
+            "- **Validation findings:** total rule-generated findings.\n"
+            "- **Affected records:** distinct records flagged by validation.\n"
+            "- **High-severity findings:** findings classified as HIGH."
+        )
+
+        st.markdown("### 4. Explore statistical analysis")
+        st.write(
+            "- **Dataset statistics:** rows, columns, missing cells, and duplicates.\n"
+            "- **Column profiles:** data types, missing percentages, unique values, "
+            "and descriptive statistics.\n"
+            "- **Categorical distributions:** common values in categorical fields.\n"
+            "- **Correlation matrix:** associations between eligible numeric columns.\n"
+            "- **Statistical notes:** guidance on interpreting the results."
+        )
+
+        st.markdown("### 5. Review validation findings")
+        st.write(
+            "Explore findings by severity and validation rule. Use the filters "
+            "and search box to narrow the results. Findings are flags that may "
+            "need investigation; they are not automatically confirmed errors."
+        )
+
+        st.markdown("### 6. Review evidence and AI insights")
+        st.write(
+            "Open the rule-level evidence sections to inspect examples. "
+            "Review the business quality report for explanations and suggested "
+            "actions. Treat AI-generated recommendations as suggestions for "
+            "human review."
+        )
+
+        st.markdown("### 7. Download your results")
+        st.write(
+            "Download filtered findings as CSV, the business quality report "
+            "as Markdown, or the structured analysis results as JSON."
+        )
+
+        st.divider()
+        st.markdown("### Advanced settings")
+
+        st.text_input(
+            "Backend API URL",
+            key="api_url",
+            help="Change this only if your backend is hosted at another URL.",
+        )
+
+        if st.button("Clear current analysis", use_container_width=True):
+            st.session_state["analysis_result"] = None
+            st.session_state["analysis_filename"] = None
+            st.rerun()
+
+
+st.divider()
+
+
+# --------------------------------------------------
 # Helper functions
 # --------------------------------------------------
 
 def get_statistical_analysis(result, summary):
-    """
-    Support both API response formats:
-    1. result["summary"]["statistical_analysis"]
-    2. result["statistical_analysis"]
-    """
+    """Support both known API response formats."""
     statistical = summary.get("statistical_analysis")
 
     if not statistical:
         statistical = result.get("statistical_analysis")
 
-    if not isinstance(statistical, dict):
-        return {}
-
-    return statistical
+    return statistical if isinstance(statistical, dict) else {}
 
 
 def safe_number(value, default=0):
-    """Return a display-safe numeric value."""
+    """Return a safe value for metrics."""
     if value is None:
         return default
 
@@ -84,65 +196,13 @@ def safe_number(value, default=0):
         return default
 
 
-def display_dataframe(data, empty_message):
-    """Display a list of dictionaries as a dataframe."""
-    if isinstance(data, list) and data:
-        st.dataframe(
-            pd.DataFrame(data),
-            use_container_width=True,
-            hide_index=True,
-        )
-    else:
-        st.info(empty_message)
-
-
 # --------------------------------------------------
-# Sidebar
+# Backend connection status
 # --------------------------------------------------
 
-with st.sidebar:
-    st.title("Data Quality")
-    st.caption("AI-assisted company data intelligence")
+api_url = st.session_state["api_url"].strip().rstrip("/")
 
-    api_url = st.text_input(
-        "Backend API URL",
-        value=DEFAULT_API_URL,
-    ).strip().rstrip("/")
-
-    st.divider()
-
-    st.markdown("**Workflow**")
-    st.markdown(
-        "1. Upload a CSV\n"
-        "2. Run validation rules\n"
-        "3. Review findings and evidence\n"
-        "4. Explore statistical analysis\n"
-        "5. Read AI-assisted insights"
-    )
-
-    if st.button("Clear current results"):
-        st.session_state.pop("analysis_result", None)
-        st.session_state.pop("analysis_filename", None)
-        st.rerun()
-
-
-# --------------------------------------------------
-# Header
-# --------------------------------------------------
-
-st.title("Business Data Quality Intelligence")
-
-st.caption(
-    "Identify data quality risks, explore validation findings, "
-    "analyze dataset statistics, and generate AI-assisted business insights."
-)
-
-
-# --------------------------------------------------
-# Backend status
-# --------------------------------------------------
-
-status_col, info_col = st.columns([1, 3])
+status_col, status_description_col = st.columns([1, 4])
 
 api_healthy = False
 
@@ -161,23 +221,29 @@ with status_col:
     else:
         st.error("Backend unavailable")
 
-with info_col:
+with status_description_col:
     st.caption(
-        "FastAPI runs the validation workflow. The backend should return "
-        "statistical profiles, validation findings, evidence, and AI insights."
+        "Upload a CSV to run validation and statistical analysis. "
+        "Use **Help & Guide** above whenever you need navigation instructions."
     )
-
-st.divider()
 
 
 # --------------------------------------------------
-# CSV upload
+# Upload section
 # --------------------------------------------------
 
 st.subheader("Analyze your dataset")
 
+st.markdown(
+    '<p class="section-intro">'
+    "Upload your company dataset to identify quality issues and explore "
+    "statistical patterns."
+    "</p>",
+    unsafe_allow_html=True,
+)
+
 uploaded_file = st.file_uploader(
-    "Upload a CSV file",
+    "Choose a CSV file",
     type=["csv"],
     help="Maximum file size: 10 MB.",
 )
@@ -185,15 +251,19 @@ uploaded_file = st.file_uploader(
 if uploaded_file is not None:
     st.caption(f"Selected file: **{uploaded_file.name}**")
 
-    if st.button(
-        "Analyze dataset",
+    if uploaded_file.size > MAX_FILE_SIZE:
+        st.error("The selected file exceeds the 10 MB limit.")
+
+    elif st.button(
+        "🔍 Analyze dataset",
         type="primary",
+        use_container_width=False,
         disabled=not api_healthy,
     ):
         try:
             with st.spinner(
-                "Validating records, calculating statistics, "
-                "and generating business insights..."
+                "Validating data, calculating statistics, "
+                "and generating insights..."
             ):
                 response = requests.post(
                     f"{api_url}/upload-csv",
@@ -254,43 +324,41 @@ if result:
     evidence = result.get("evidence") or {}
     ai_status = result.get("ai_status", "unknown")
 
-    # Important compatibility fix:
-    # Statistics can be nested inside summary or at the response root.
     statistical = get_statistical_analysis(result, summary)
 
     st.divider()
-    st.subheader("Dataset overview")
+    st.header("Analysis results")
 
     filename = st.session_state.get(
         "analysis_filename",
         "Uploaded dataset",
     )
-    st.caption(f"Analyzed file: **{filename}**")
+    st.caption(f"Dataset: **{filename}**")
 
-    # --------------------------------------------------
+    # ----------------------------------------------
     # AI status
-    # --------------------------------------------------
+    # ----------------------------------------------
 
     st.markdown("### AI insight generation")
 
     if ai_status == "success":
-        st.success(
-            "AI-generated insights: the AI service successfully returned a report."
-        )
+        st.success("The AI service successfully returned a report.")
     elif ai_status == "fallback":
         st.warning(
-            "Fallback report: deterministic insights were generated "
-            "because AI insight generation was unavailable."
+            "A fallback report was generated because AI insight generation "
+            "was unavailable."
         )
     else:
         st.info(
-            "AI status is unknown. The API response did not identify "
-            "whether AI or the fallback generated the report."
+            "The backend did not specify whether AI or fallback logic "
+            "generated the report."
         )
 
-    # --------------------------------------------------
-    # KPI cards
-    # --------------------------------------------------
+    # ----------------------------------------------
+    # KPI metrics
+    # ----------------------------------------------
+
+    st.markdown("### Dataset overview")
 
     k1, k2, k3, k4 = st.columns(4)
 
@@ -321,17 +389,15 @@ if result:
             safe_number(severity_counts.get("HIGH")),
         )
 
-    # --------------------------------------------------
+    # ----------------------------------------------
     # Statistical analysis
-    # --------------------------------------------------
+    # ----------------------------------------------
 
     st.divider()
-    st.subheader("Statistical analysis")
+    st.header("Statistical analysis")
 
     if statistical:
         overview = statistical.get("dataset_overview") or {}
-
-        st.markdown("**Dataset statistics**")
 
         stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
 
@@ -367,15 +433,12 @@ if result:
             f"Memory usage: {memory_bytes:,} bytes"
         )
 
-        # ----------------------------------------------
         # Column profiles
-        # ----------------------------------------------
-
         column_profiles = statistical.get("columns") or []
 
-        if column_profiles:
-            st.markdown("**Column profiles and descriptive statistics**")
+        st.markdown("### Column profiles")
 
+        if column_profiles:
             profile_rows = []
 
             for column in column_profiles:
@@ -394,7 +457,7 @@ if result:
                         "Unique (%)": column.get("unique_percent"),
                         "Mean": stats.get("mean"),
                         "Median": stats.get("median"),
-                        "Std. deviation": stats.get("standard_deviation"),
+                        "Standard deviation": stats.get("standard_deviation"),
                         "Minimum": stats.get("minimum"),
                         "Maximum": stats.get("maximum"),
                         "IQR outliers": stats.get("outlier_count_iqr"),
@@ -409,12 +472,9 @@ if result:
                 hide_index=True,
             )
         else:
-            st.info("The backend did not return column profiles.")
+            st.info("No column profiles were returned by the backend.")
 
-        # ----------------------------------------------
-        # Categorical field details
-        # ----------------------------------------------
-
+        # Categorical distributions
         categorical_columns = [
             column
             for column in column_profiles
@@ -422,48 +482,46 @@ if result:
         ]
 
         if categorical_columns:
-            st.markdown("**Categorical field distributions**")
+            st.markdown("### Categorical distributions")
 
             for column in categorical_columns:
                 name = column.get("column", "Unknown column")
-                top_values = column.get("top_values") or []
 
-                with st.expander(f"Values in {name}"):
+                with st.expander(f"Explore {name}"):
                     st.write(
                         f"Distinct categories: "
                         f"{column.get('category_count', 0)}"
                     )
-
                     st.write(
                         f"High cardinality: "
                         f"{column.get('high_cardinality', False)}"
                     )
 
-                    display_dataframe(
-                        top_values,
-                        "No non-missing category values found.",
-                    )
+                    top_values = column.get("top_values") or []
 
-        # ----------------------------------------------
+                    if top_values:
+                        st.dataframe(
+                            pd.DataFrame(top_values),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                    else:
+                        st.info("No non-missing category values found.")
+
         # Numeric correlations
-        # ----------------------------------------------
+        st.markdown("### Numeric correlations")
 
         correlations = statistical.get("numeric_correlations") or {}
 
-        st.markdown("**Numeric correlation analysis**")
-
         if correlations:
             st.caption(
-                "Correlation values range from -1 to +1. Positive values "
-                "indicate a positive association, while negative values "
-                "indicate a negative association. Correlation does not "
-                "establish causation."
+                "Values range from -1 to +1. Positive values indicate "
+                "positive association; negative values indicate negative "
+                "association. Correlation does not establish causation."
             )
 
-            correlation_df = pd.DataFrame(correlations)
-
             st.dataframe(
-                correlation_df,
+                pd.DataFrame(correlations),
                 use_container_width=True,
             )
         else:
@@ -472,67 +530,56 @@ if result:
                 "with sufficient overlapping observations."
             )
 
-        # ----------------------------------------------
         # Statistical notes
-        # ----------------------------------------------
-
         notes = statistical.get("notes") or []
 
         if notes:
-            with st.expander("How to interpret these statistics"):
+            with st.expander("How to interpret the statistics"):
                 for note in notes:
                     st.write(f"- {note}")
 
     else:
         st.warning(
-            "Statistical analysis was not found in the API response. "
-            "The dashboard checked both summary.statistical_analysis "
-            "and the top-level statistical_analysis field."
+            "Statistical analysis was not found in the backend response."
         )
 
-        with st.expander("Debug API response"):
-            st.write("Top-level response keys:")
-            st.write(list(result.keys()))
+        with st.expander("Troubleshoot missing statistical analysis"):
+            st.write("Top-level API response keys:")
+            st.code(str(list(result.keys())))
 
-            st.write("Summary keys:")
-            st.write(list(summary.keys()))
+            st.write("Summary response keys:")
+            st.code(str(list(summary.keys())))
 
-            st.write("AI status:")
-            st.write(ai_status)
-
-            st.caption(
-                "If statistical_analysis is missing from both sets of "
-                "keys, the backend must be checked and redeployed."
+            st.write(
+                "If statistical_analysis is absent from both locations, "
+                "check src/validation.py and src/api.py, then redeploy "
+                "the backend on Render."
             )
 
-    # --------------------------------------------------
+    # ----------------------------------------------
     # Validation analytics
-    # --------------------------------------------------
+    # ----------------------------------------------
 
     st.divider()
-    st.subheader("Validation analytics")
+    st.header("Validation analytics")
 
     st.caption(
-        f"Validation rules with findings: {len(rule_counts)}. "
-        "Findings are rule-generated flags, not necessarily confirmed "
-        "errors. Finding counts may differ from affected-record counts."
+        "Findings are rule-generated flags that may require investigation. "
+        "They are not necessarily confirmed errors."
     )
 
     chart_col1, chart_col2 = st.columns(2)
 
     with chart_col1:
-        st.markdown("**Findings by severity**")
+        st.markdown("### Findings by severity")
 
         if severity_counts:
-            severity_df = pd.DataFrame(
-                {"Findings": severity_counts}
-            )
-            st.bar_chart(severity_df)
+            st.bar_chart(pd.DataFrame({"Findings": severity_counts}))
         else:
             st.info("No findings by severity to display.")
 
     with chart_col2:
-        st.markdown("**Findings by validation rule**")
+        st.markdown("### Findings by validation rule")
 
         if rule_counts:
             rule_df = pd.DataFrame(
@@ -543,33 +590,32 @@ if result:
         else:
             st.info("No validation-rule findings to display.")
 
-    # --------------------------------------------------
+    # ----------------------------------------------
     # Rule-level evidence
-    # --------------------------------------------------
+    # ----------------------------------------------
 
     st.divider()
-    st.subheader("Rule-level evidence")
+    st.header("Rule-level evidence")
 
     rule_evidence = evidence.get("rule_evidence") or []
 
     if rule_evidence:
         st.caption(
-            "Evidence grouped by validation rule using Python. "
-            "Examples may be limited to five findings per rule."
+            "Evidence is grouped by validation rule. "
+            "The backend may limit the number of examples shown."
         )
 
-        for rule_item in rule_evidence:
-            rule_name = rule_item.get("rule", "Unknown rule")
-            finding_count = rule_item.get("finding_count", 0)
-            severity_breakdown = rule_item.get("severity_breakdown") or {}
-            examples = rule_item.get("evidence") or []
-            omitted = rule_item.get("additional_findings_omitted", 0)
+        for item in rule_evidence:
+            rule_name = item.get("rule", "Unknown rule")
+            finding_count = item.get("finding_count", 0)
 
             with st.expander(
                 f"{rule_name} — {finding_count} finding(s)"
             ):
                 st.write("**Severity breakdown**")
-                st.json(severity_breakdown)
+                st.json(item.get("severity_breakdown") or {})
+
+                examples = item.get("evidence") or []
 
                 if examples:
                     st.write("**Example findings**")
@@ -581,27 +627,22 @@ if result:
                 else:
                     st.info("No example findings were supplied.")
 
+                omitted = item.get("additional_findings_omitted", 0)
+
                 if omitted:
                     st.caption(
                         f"{omitted} additional finding(s) omitted "
-                        "from this evidence preview."
+                        "from this preview."
                     )
-
-    elif evidence:
-        st.info(
-            "Evidence was returned, but no rule-level examples were supplied."
-        )
     else:
-        st.info(
-            "Rule-level evidence is not available in this API response."
-        )
+        st.info("No rule-level evidence was returned by the backend.")
 
-    # --------------------------------------------------
-    # Findings table
-    # --------------------------------------------------
+    # ----------------------------------------------
+    # Findings explorer
+    # ----------------------------------------------
 
     st.divider()
-    st.subheader("Explore findings")
+    st.header("Explore findings")
 
     if issues:
         findings_df = pd.DataFrame(issues)
@@ -638,7 +679,7 @@ if result:
 
         search_text = st.text_input(
             "Search findings",
-            placeholder="Enter a record ID, name, or keyword...",
+            placeholder="Search by record ID, name, or keyword...",
         )
 
         filtered_df = findings_df.copy()
@@ -695,11 +736,9 @@ if result:
             hide_index=True,
         )
 
-        findings_csv = filtered_df[display_columns].to_csv(index=False)
-
         st.download_button(
             "Download filtered findings (CSV)",
-            data=findings_csv,
+            data=filtered_df[display_columns].to_csv(index=False),
             file_name="filtered_data_quality_findings.csv",
             mime="text/csv",
         )
@@ -707,17 +746,17 @@ if result:
     else:
         st.success("No validation findings were reported.")
 
-    # --------------------------------------------------
+    # ----------------------------------------------
     # Business quality report
-    # --------------------------------------------------
+    # ----------------------------------------------
 
     st.divider()
-    st.subheader("Business quality report")
+    st.header("Business quality report")
 
     st.caption(
-        "Verified Python summaries and validation findings provide the "
-        "source of truth for numerical values. AI-generated explanations "
-        "are recommendations for human review."
+        "Numerical values should be verified against the statistical "
+        "results and validation findings. AI-generated recommendations "
+        "should be reviewed before being acted upon."
     )
 
     if report:
@@ -725,7 +764,7 @@ if result:
             st.markdown(report)
 
         st.download_button(
-            "Download full report (Markdown)",
+            "Download report (Markdown)",
             data=report,
             file_name="data_quality_report.md",
             mime="text/markdown",
@@ -733,12 +772,12 @@ if result:
     else:
         st.info("No business quality report was returned.")
 
-    # --------------------------------------------------
+    # ----------------------------------------------
     # Structured JSON download
-    # --------------------------------------------------
+    # ----------------------------------------------
 
     st.divider()
-    st.subheader("Export results")
+    st.header("Export results")
 
     structured_result = {
         "status": result.get("status", "unknown"),
@@ -763,6 +802,6 @@ if result:
 
 else:
     st.info(
-        "Upload a CSV and select **Analyze dataset** "
-        "to see the analytics dashboard."
+        "Your dashboard is ready. Upload a CSV above and select "
+        "**Analyze dataset** to begin."
     )
