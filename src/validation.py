@@ -1,125 +1,307 @@
 
 import json
 from pathlib import Path
-from src.statistical_analysis import analyze_dataset
+
 import pandas as pd
+
+from src.statistical_analysis import analyze_dataset
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_PATH = PROJECT_ROOT / "data" / "companies.csv"
 REPORT_PATH = PROJECT_ROOT / "reports" / "quality_report.json"
 
-VALID_COUNTRIES = {"US", "IN", "GB"}
-MIN_CREDIT_SCORE = 0
-MAX_CREDIT_SCORE = 100
+
+def _safe_value(value):
+    """Convert pandas/numpy values into JSON-safe Python values."""
+    if pd.isna(value):
+        return None
+
+    if hasattr(value, "item"):
+        try:
+            value = value.item()
+        except (ValueError, AttributeError):
+            pass
+
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+
+    return str(value)
 
 
-def validate_companies(file_path=DATA_PATH):
-    df = pd.read_csv(file_path)
+def _record_identifier(df, index):
+    """Return a useful identifier without assuming a specific schema."""
+    for column in df.columns:
+        if str(column).strip().lower() in {
+            "id",
+            "record_id",
+            "customer_id",
+            "employee_id",
+            "transaction_id",
+            "company_id",
+        }:
+            value = df.iloc[index][column]
+
+            if pd.notna(value):
+                return str(value)
+
+    return str(df.index[index])
+
+
+def _add_issue(issues, df, row_index, rule, severity, message, column=None):
+    """Create a consistent, schema-independent finding."""
+    issue = {
+        "record_id": _record_identifier(df, row_index),
+        "row_index": int(row_index),
+        "rule": rule,
+        "severity": severity,
+        "message": message,
+    }
+
+    if column is not None:
+        issue["column"] = str(column)
+
+    # Include available context without forcing particular column names.
+    row = df.iloc[row_index]
+
+    for field in list(df.columns)[:10]:
+        issue[str(field)] = _safe_value(row[field])
+
+    issues.append(issue)
+
+
+def validate_dataset(file_path):
+    """
+    Validate a generic tabular dataset.
+
+    Rules:
+    - Missing values
+    - Duplicate rows
+    - Duplicate column names
+    - Constant columns
+    - Potential numeric outliers using the IQR method
+
+    These rules flag potential quality concerns; they do not assume
+    that unusual values are necessarily incorrect.
+    """
+    file_path = Path(file_path)
+
+    try:
+        df = pd.read_csv(file_path)
+    except pd.errors.EmptyDataError as exc:
+        raise ValueError("The uploaded CSV is empty.") from exc
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            "The CSV encoding could not be read. Save the file as UTF-8 "
+            "and upload it again."
+        ) from exc
+    except pd.errors.ParserError as exc:
+        raise ValueError(
+            f"The CSV could not be parsed: {exc}"
+        ) from exc
+
+    if df.empty and len(df.columns) == 0:
+        raise ValueError("The uploaded CSV has no columns.")
+
+    if len(df.columns) == 0:
+        raise ValueError("The uploaded CSV has no columns.")
+
     issues = []
 
-    def add_issue(row, rule, severity, message):
-        issues.append({
-            "company_id": str(row.get("company_id", "")),
-            "company_name": str(row.get("company_name", "")),
-            "rule": rule,
-            "severity": severity,
-            "message": message,
-        })
+    # ----------------------------------------------
+    # Duplicate column names
+    # ----------------------------------------------
 
-    # 1. Missing required values
-    required_columns = [
-        "company_id", "company_name", "industry",
-        "country", "revenue", "employee_count",
-    ]
+    column_names = pd.Index(df.columns.astype(str))
+    duplicated_names = column_names[
+        column_names.duplicated(keep=False)
+    ].unique()
 
-    for column in required_columns:
-        if column not in df.columns:
-            raise ValueError(f"Required column missing: {column}")
+    for column in duplicated_names:
+        issues.append(
+            {
+                "record_id": None,
+                "row_index": None,
+                "column": str(column),
+                "rule": "duplicate_column_name",
+                "severity": "HIGH",
+                "message": (
+                    f"The column name '{column}' appears more than once."
+                ),
+            }
+        )
 
-        for _, row in df[df[column].isna()].iterrows():
-            add_issue(row, "missing_value", "HIGH",
-                      f"Required field '{column}' is missing.")
+    # ----------------------------------------------
+    # Missing values
+    # ----------------------------------------------
 
-    # 2. Duplicate company IDs
-    for _, row in df[df["company_id"].duplicated(keep=False)].iterrows():
-        add_issue(row, "duplicate_company_id", "HIGH",
-                  "Company ID is duplicated.")
+    for column in df.columns:
+        missing_mask = df[column].isna()
+        missing_count = int(missing_mask.sum())
 
-    # 3. Potential duplicate companies based on normalized names
-    normalized_names = df["company_name"].fillna("").str.strip().str.casefold()
-    duplicate_name_mask = normalized_names.duplicated(keep=False) & normalized_names.ne("")
+        if missing_count == 0:
+            continue
 
-    for _, row in df[duplicate_name_mask].iterrows():
-        add_issue(row, "potential_duplicate_company", "MEDIUM",
-                  "Company name matches another record after trimming spaces and ignoring case.")
+        missing_percent = missing_count / max(len(df), 1) * 100
 
-    # 4. Invalid country codes
-    for _, row in df[~df["country"].isin(VALID_COUNTRIES)].iterrows():
-        add_issue(row, "invalid_country", "HIGH",
-                  f"Country code '{row['country']}' is not in the approved list.")
+        severity = "HIGH" if missing_percent >= 50 else "MEDIUM"
 
-    # 5. Invalid numeric values
-    for _, row in df[df["revenue"].notna() & (df["revenue"] < 0)].iterrows():
-        add_issue(row, "negative_revenue", "HIGH",
-                  "Revenue cannot be negative under this validation rule.")
+        for position in range(len(df)):
+            if missing_mask.iloc[position]:
+                _add_issue(
+                    issues=issues,
+                    df=df,
+                    row_index=position,
+                    rule="missing_value",
+                    severity=severity,
+                    message=(
+                        f"Column '{column}' contains a missing value. "
+                        f"{missing_percent:.1f}% of this column is missing."
+                    ),
+                    column=column,
+                )
 
-    for _, row in df[df["employee_count"].notna() & (df["employee_count"] < 0)].iterrows():
-        add_issue(row, "negative_employee_count", "HIGH",
-                  "Employee count cannot be negative.")
+    # ----------------------------------------------
+    # Duplicate rows
+    # ----------------------------------------------
 
-    for _, row in df[df["employee_count"].notna() & (df["employee_count"] == 0)].iterrows():
-        add_issue(row, "zero_employee_count", "MEDIUM",
-                  "Company reports zero employees; review whether this is expected.")
+    duplicate_mask = df.duplicated(keep=False)
 
-    invalid_credit = (
-        df["credit_score"].notna()
-        & ~df["credit_score"].between(MIN_CREDIT_SCORE, MAX_CREDIT_SCORE)
-    )
-    for _, row in df[invalid_credit].iterrows():
-        add_issue(row, "invalid_credit_score", "HIGH",
-                  "Credit score must be between 0 and 100.")
+    for position in range(len(df)):
+        if duplicate_mask.iloc[position]:
+            _add_issue(
+                issues=issues,
+                df=df,
+                row_index=position,
+                rule="duplicate_row",
+                severity="MEDIUM",
+                message=(
+                    "This row matches another row across all columns. "
+                    "Verify whether the duplicate is intentional."
+                ),
+            )
 
-    # 6. Suspicious growth values: flag for review, not automatic rejection
-    for _, row in df[df["annual_growth"].notna() & (df["annual_growth"] > 100)].iterrows():
-        add_issue(row, "unusual_annual_growth", "MEDIUM",
-                  "Annual growth exceeds 100%; verify against the source.")
+    # ----------------------------------------------
+    # Constant columns
+    # ----------------------------------------------
 
-    # 7. Website format check
-    website = df["website"].fillna("").astype(str).str.strip()
-    valid_website = website.str.match(r"^https?://[^\s]+\.[^\s]+$", case=False)
+    for column in df.columns:
+        non_missing = df[column].dropna()
 
-    for idx in df.index[~valid_website]:
-        row = df.loc[idx]
-        add_issue(row, "invalid_website", "MEDIUM",
-                  "Website does not match the expected HTTP/HTTPS URL format.")
+        if len(non_missing) > 1 and non_missing.nunique() == 1:
+            issues.append(
+                {
+                    "record_id": None,
+                    "row_index": None,
+                    "column": str(column),
+                    "rule": "constant_column",
+                    "severity": "LOW",
+                    "message": (
+                        f"Column '{column}' has only one distinct "
+                        "non-missing value. Check whether this field "
+                        "provides useful information."
+                    ),
+                }
+            )
 
-    # Summary
+    # ----------------------------------------------
+    # Numeric outliers using IQR
+    # ----------------------------------------------
+
+    for column in df.select_dtypes(include="number").columns:
+        series = df[column].dropna()
+
+        # Small samples do not support a useful outlier assessment.
+        if len(series) < 4 or series.nunique() < 2:
+            continue
+
+        q1 = series.quantile(0.25)
+        q3 = series.quantile(0.75)
+        iqr = q3 - q1
+
+        if pd.isna(iqr) or iqr == 0:
+            continue
+
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+
+        outlier_positions = (
+            (df[column] < lower_bound)
+            | (df[column] > upper_bound)
+        ).fillna(False)
+
+        for position in range(len(df)):
+            if outlier_positions.iloc[position]:
+                value = _safe_value(df.iloc[position][column])
+
+                _add_issue(
+                    issues=issues,
+                    df=df,
+                    row_index=position,
+                    rule="potential_numeric_outlier",
+                    severity="LOW",
+                    message=(
+                        f"Value {value} in column '{column}' falls outside "
+                        f"the IQR thresholds [{lower_bound:.4g}, "
+                        f"{upper_bound:.4g}]. Verify its context."
+                    ),
+                    column=column,
+                )
+
+    # ----------------------------------------------
+    # Summaries
+    # ----------------------------------------------
+
     issue_df = pd.DataFrame(issues)
-    summary = {
+
+    issues_by_severity = {}
+    issues_by_rule = {}
+
+    if not issue_df.empty:
+        issues_by_severity = {
+            str(key): int(value)
+            for key, value in issue_df["severity"].value_counts().items()
+        }
+
+        issues_by_rule = {
+            str(key): int(value)
+            for key, value in issue_df["rule"].value_counts().items()
+        }
+
+    affected_rows = {
+        issue["row_index"]
+        for issue in issues
+        if issue.get("row_index") is not None
+    }
+
+    # Include duplicate column/constant-column findings in total findings,
+    # but only row-specific findings contribute to affected records.
+    report = {
+        "dataset_name": file_path.name,
         "total_records": int(len(df)),
+        "total_columns": int(len(df.columns)),
         "total_issues": int(len(issues)),
-        "affected_records": int(issue_df["company_id"].nunique()) if not issue_df.empty else 0,
-        "issues_by_severity": (
-            issue_df["severity"].value_counts().to_dict()
-            if not issue_df.empty else {}
-        ),
-        "issues_by_rule": (
-            issue_df["rule"].value_counts().to_dict()
-            if not issue_df.empty else {}
-        ),
+        "affected_records": int(len(affected_rows)),
+        "issues_by_severity": issues_by_severity,
+        "issues_by_rule": issues_by_rule,
         "issues": issues,
         "statistical_analysis": analyze_dataset(df),
     }
 
+    # Save a local JSON report for existing project workflows.
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with REPORT_PATH.open("w", encoding="utf-8") as file:
-        json.dump(summary, file, indent=2)
 
-    return summary
+    with REPORT_PATH.open("w", encoding="utf-8") as report_file:
+        json.dump(report, report_file, indent=2, default=str)
+
+    return report
 
 
-if __name__ == "__main__":
-    report = validate_companies()
-    print(json.dumps({k: v for k, v in report.items() if k != "issues"}, indent=2))
-    print(f"\nFull report saved to: {REPORT_PATH}")
+def validate_companies(file_path=DATA_PATH):
+    """
+    Backward-compatible wrapper.
+
+    Existing agent code can continue calling validate_companies()
+    while the application transitions to generic dataset validation.
+    """
+    return validate_dataset(file_path)

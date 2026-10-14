@@ -1,5 +1,4 @@
 
-import io
 import tempfile
 from pathlib import Path
 
@@ -8,71 +7,44 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import PlainTextResponse
 
 from src.agent import agent
+from src.validation import validate_dataset
 
-
-# ---------- Configuration ----------
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REPORT_PATH = PROJECT_ROOT / "reports" / "agent_quality_report.md"
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-
-REQUIRED_COLUMNS = {
-    "company_id",
-    "company_name",
-    "industry",
-    "country",
-    "revenue",
-    "employee_count",
-    "credit_score",
-    "annual_growth",
-    "registration_date",
-    "website",
-}
-
-
-# ---------- FastAPI application ----------
+MAX_FILE_SIZE = 10 * 1024 * 1024
 
 app = FastAPI(
-    title="Business Data Quality Agent",
+    title="AI Data Quality Validator API",
     description=(
-        "Validate company data and generate AI-assisted "
-        "business insights using Python, LangGraph, and Ollama."
+        "Generic CSV data quality validation, statistical profiling, "
+        "and AI-assisted insights."
     ),
-    version="0.3.0",
+    version="2.0.0",
 )
 
 
-# ---------- Response builder ----------
-
 def build_response(result: dict) -> dict:
-    """
-    Build a consistent API response from the LangGraph result.
+    """Build a consistent response for the Streamlit dashboard."""
+    validation = result.get("validation_report") or {}
 
-    Statistical analysis is included inside summary because
-    the Streamlit dashboard reads it from that location.
-    """
-
-    validation = result["validation_report"]
-
-    statistical_analysis = validation.get(
-        "statistical_analysis", {}
-    )
+    statistical_analysis = validation.get("statistical_analysis") or {}
 
     return {
         "status": "success",
-        "message": "Validation workflow completed.",
+        "message": "Dataset analysis completed.",
+        "dataset_name": validation.get("dataset_name"),
         "ai_status": result.get("ai_status", "unknown"),
         "summary": {
             "total_records": validation.get("total_records", 0),
+            "total_columns": validation.get("total_columns", 0),
             "total_issues": validation.get("total_issues", 0),
             "affected_records": validation.get("affected_records", 0),
             "issues_by_severity": validation.get(
                 "issues_by_severity", {}
             ),
-            "issues_by_rule": validation.get(
-                "issues_by_rule", {}
-            ),
+            "issues_by_rule": validation.get("issues_by_rule", {}),
             "statistical_analysis": statistical_analysis,
         },
         "issues": validation.get("issues", []),
@@ -81,158 +53,153 @@ def build_response(result: dict) -> dict:
     }
 
 
-# ---------- Health check ----------
-
-@app.get("/health")
-def health_check():
+@app.get("/")
+def root():
     return {
-        "status": "healthy",
-        "service": "Business Data Quality Agent",
+        "status": "success",
+        "service": "AI Data Quality Validator API",
+        "docs": "/docs",
+        "health": "/health",
     }
 
 
-# ---------- Run validation on default dataset ----------
+@app.get("/health")
+def health():
+    return {
+        "status": "healthy",
+        "service": "AI Data Quality Validator API",
+    }
+
 
 @app.post("/run-validation")
 def run_validation():
-    """Run validation on the default project dataset."""
-
+    """Validate the default project dataset."""
     try:
         result = agent.invoke({})
         return build_response(result)
 
     except Exception as exc:
-        print(
-            f"Validation workflow failed: "
-            f"{type(exc).__name__}: {exc}"
-        )
-
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Validation workflow failed. "
-                "Check the server logs."
-            ),
+            detail=f"Dataset validation failed: {str(exc)}",
         ) from exc
 
 
-# ---------- Upload and analyze CSV ----------
-
 @app.post("/upload-csv")
 async def upload_csv(file: UploadFile = File(...)):
-    """Validate an uploaded CSV and return structured findings."""
+    """
+    Validate an uploaded CSV with arbitrary column names.
 
-    if (
-        not file.filename
-        or Path(file.filename).suffix.lower() != ".csv"
-    ):
+    No company-specific schema is required.
+    """
+    if not file.filename:
         raise HTTPException(
             status_code=400,
-            detail="Please upload a file with a .csv extension.",
+            detail="Please upload a CSV file.",
+        )
+
+    if Path(file.filename).suffix.lower() != ".csv":
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Please upload a .csv file.",
+        )
+
+    content = await file.read(MAX_FILE_SIZE + 1)
+
+    if not content:
+        raise HTTPException(
+            status_code=400,
+            detail="The uploaded file is empty.",
+        )
+
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail="The CSV exceeds the 10 MB upload limit.",
         )
 
     temp_path = None
 
     try:
-        # Read one byte beyond the limit to detect oversized files.
-        contents = await file.read(MAX_FILE_SIZE + 1)
-
-        if not contents:
-            raise HTTPException(
-                status_code=400,
-                detail="The uploaded file is empty.",
-            )
-
-        if len(contents) > MAX_FILE_SIZE:
-            raise HTTPException(
-                status_code=413,
-                detail="File exceeds the 10 MB upload limit.",
-            )
-
-        # Confirm that the file can be parsed as a CSV.
+        # Check that pandas can read the CSV and that it has columns.
         try:
-            headers = pd.read_csv(
-                io.BytesIO(contents),
-                nrows=0,
-            ).columns
-
-        except (
-            ValueError,
-            UnicodeDecodeError,
-            pd.errors.ParserError,
-        ) as exc:
+            preview = pd.read_csv(
+                pd.io.common.BytesIO(content),
+                nrows=5,
+            )
+        except UnicodeDecodeError as exc:
             raise HTTPException(
                 status_code=400,
-                detail="The file is not a readable CSV.",
+                detail="Could not read the CSV encoding. Please use UTF-8.",
+            ) from exc
+        except pd.errors.EmptyDataError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="The CSV has no readable columns.",
+            ) from exc
+        except pd.errors.ParserError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid CSV format: {str(exc)}",
             ) from exc
 
-        # Retain the existing company dataset requirements.
-        missing_columns = sorted(
-            REQUIRED_COLUMNS - set(headers)
-        )
-
-        if missing_columns:
+        if len(preview.columns) == 0:
             raise HTTPException(
                 status_code=400,
-                detail={
-                    "message": "CSV is missing required columns.",
-                    "missing_columns": missing_columns,
-                },
+                detail="The CSV must contain a header row.",
             )
 
-        # Save the uploaded file temporarily for the agent.
+        # Store the uploaded data temporarily for the validation workflow.
         with tempfile.NamedTemporaryFile(
             mode="wb",
             suffix=".csv",
             delete=False,
         ) as temp_file:
-            temp_file.write(contents)
-            temp_path = temp_file.name
+            temp_file.write(content)
+            temp_path = Path(temp_file.name)
 
-        # Run the LangGraph workflow.
-        result = agent.invoke(
-            {"input_path": temp_path}
-        )
+        # The validator and agent both receive the uploaded dataset.
+        result = agent.invoke({"input_path": str(temp_path)})
 
-        # Return validation and statistical analysis together.
-        response_data = build_response(result)
+        response = build_response(result)
 
-        return response_data
+        # Return the original upload filename for dashboard display.
+        response["dataset_name"] = Path(file.filename).name
+
+        return response
 
     except HTTPException:
         raise
 
-    except Exception as exc:
-        print(
-            f"CSV processing failed: "
-            f"{type(exc).__name__}: {exc}"
-        )
+    except (ValueError, pd.errors.ParserError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
 
+    except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail=(
-                "CSV processing or report generation failed. "
-                "Check the server logs."
-            ),
+            detail=f"Could not analyze the uploaded dataset: {str(exc)}",
         ) from exc
 
     finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
         await file.close()
 
-        if temp_path:
-            Path(temp_path).unlink(missing_ok=True)
-
-
-# ---------- Retrieve the generated report ----------
 
 @app.get("/report", response_class=PlainTextResponse)
 def get_report():
-    """Return the latest generated Markdown report."""
-
+    """Return the latest Markdown report if available."""
     if not REPORT_PATH.exists():
         raise HTTPException(
             status_code=404,
-            detail="No report exists yet. Run validation first.",
+            detail="No report is available yet. Run an analysis first.",
         )
 
     return REPORT_PATH.read_text(encoding="utf-8")

@@ -1,369 +1,293 @@
 ﻿
-import json
 import os
-from collections import defaultdict
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict, Any
 
-from langgraph.graph import END, START, StateGraph
-from ollama import Client, chat as local_chat
+import pandas as pd
+from langgraph.graph import StateGraph, END
 
-from src.validation import validate_companies
+from src.validation import validate_dataset
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REPORT_PATH = PROJECT_ROOT / "reports" / "agent_quality_report.md"
 
-CLOUD_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
-LOCAL_MODEL = os.getenv("OLLAMA_LOCAL_MODEL", "llama3.2:latest")
-
 
 class AgentState(TypedDict, total=False):
     input_path: str
-    validation_report: dict
-    evidence_summary: dict
+    validation_report: dict[str, Any]
+    evidence_summary: dict[str, Any]
     ai_insights: str
     ai_status: str
     report_source: str
     final_report: str
 
 
-def chat(*, model: str, messages: list, options: dict | None = None):
-    """Use Ollama Cloud when configured; otherwise use local Ollama."""
-    api_key = os.getenv("OLLAMA_API_KEY")
-
-    if api_key:
-        client = Client(
-            host="https://ollama.com",
-            headers={"Authorization": f"Bearer {api_key}"},
-        )
-        return client.chat(
-            model=model,
-            messages=messages,
-            options=options or {"temperature": 0.1},
-        )
-
-    return local_chat(
-        model=LOCAL_MODEL,
-        messages=messages,
-        options=options or {"temperature": 0.1},
-    )
-
-
-def response_text(response) -> str:
-    """Support both Ollama response objects and test/mock dictionaries."""
-    if isinstance(response, dict):
-        return response["message"]["content"].strip()
-
-    return response.message.content.strip()
-
-
 def validate_data(state: AgentState) -> dict:
-    """Run deterministic validation on the supplied or default CSV."""
+    """Validate the supplied CSV or the default dataset."""
+
     input_path = state.get("input_path")
-    report = validate_companies(input_path) if input_path else validate_companies()
+
+    if input_path:
+        report = validate_dataset(input_path)
+    else:
+        default_path = PROJECT_ROOT / "data" / "companies.csv"
+        report = validate_dataset(default_path)
+
     return {"validation_report": report}
 
 
 def build_evidence_summary(report: dict) -> dict:
-    """Build verified rule-level evidence using Python."""
-    grouped_findings = defaultdict(list)
+    """Create a dataset-independent summary of validation findings."""
 
-    for issue in report.get("issues", []):
-        rule = issue.get("rule", "unknown_rule")
-        grouped_findings[rule].append({
-            "company_id": issue.get("company_id"),
-            "severity": issue.get("severity", "UNKNOWN"),
-            "message": issue.get("message", ""),
-        })
+    issues = report.get("issues", [])
+    severity_counts = report.get("issues_by_severity", {})
+    rule_counts = report.get("issues_by_rule", {})
 
-    rules = []
-    for rule, findings in sorted(grouped_findings.items()):
-        severity_counts = defaultdict(int)
+    findings_by_rule = {}
 
-        for finding in findings:
-            severity_counts[finding["severity"]] += 1
+    for issue in issues:
+        rule = issue.get("rule", "unknown")
+        findings_by_rule.setdefault(rule, [])
 
-        rules.append({
-            "rule": rule,
-            "finding_count": len(findings),
-            "severity_breakdown": dict(sorted(severity_counts.items())),
-            "evidence": findings[:5],
-            "additional_findings_omitted": max(0, len(findings) - 5),
-        })
+        if len(findings_by_rule[rule]) < 5:
+            findings_by_rule[rule].append({
+                "record_id": issue.get("record_id"),
+                "row_index": issue.get("row_index"),
+                "column": issue.get("column"),
+                "severity": issue.get("severity"),
+                "message": issue.get("message"),
+            })
+
+    statistical_analysis = report.get("statistical_analysis", {})
+    overview = statistical_analysis.get("dataset_overview", {})
 
     return {
-        "verified_totals": {
-            "total_records": report["total_records"],
-            "total_issues": report["total_issues"],
-            "affected_records": report["affected_records"],
-        },
-        "verified_severity_breakdown": report["issues_by_severity"],
-        "verified_rule_breakdown": report["issues_by_rule"],
-        "rule_evidence": rules,
+        "dataset_name": report.get("dataset_name", "dataset.csv"),
+        "total_records": report.get("total_records", 0),
+        "total_columns": report.get("total_columns", 0),
+        "total_issues": report.get("total_issues", 0),
+        "affected_records": report.get("affected_records", 0),
+        "issues_by_severity": severity_counts,
+        "issues_by_rule": rule_counts,
+        "dataset_overview": overview,
+        "sample_findings_by_rule": findings_by_rule,
     }
 
 
-RULE_ACTIONS = {
-    "potential_duplicate_company": (
-        "Compare company identifiers and other attributes; merge only "
-        "after confirming that the records represent the same entity."
-    ),
-    "missing_value": (
-        "Retrieve the missing field from an authoritative source and "
-        "record the provenance of the correction."
-    ),
-    "invalid_country": (
-        "Check the source country value and map it to an approved country code."
-    ),
-    "negative_revenue": (
-        "Verify the value, sign, currency, and accounting context against "
-        "the source record before changing it."
-    ),
-    "negative_employee_count": (
-        "Verify the employee count and its reporting period against the source."
-    ),
-    "zero_employee_count": (
-        "Confirm whether zero employees is legitimate for this entity."
-    ),
-    "invalid_credit_score": (
-        "Check the score, allowed range, and source-system definition."
-    ),
-    "unusual_annual_growth": (
-        "Verify the growth calculation, reporting periods, and source values."
-    ),
-    "invalid_website": (
-        "Confirm the official website and normalize it to a valid HTTP/HTTPS URL."
-    ),
-}
+def create_fallback_insights(
+    report: dict,
+    evidence: dict,
+) -> str:
+    """Generate useful insights without requiring an AI service."""
 
+    total_records = report.get("total_records", 0)
+    total_columns = report.get("total_columns", 0)
+    total_issues = report.get("total_issues", 0)
+    affected_records = report.get("affected_records", 0)
 
-def build_fallback_insights(evidence: dict) -> str:
-    """Create a useful business report without an available language model."""
-    totals = evidence["verified_totals"]
-    rules = evidence["rule_evidence"]
-    severity = evidence["verified_severity_breakdown"]
+    severity = report.get("issues_by_severity", {})
+    rules = report.get("issues_by_rule", {})
 
-    if not rules:
-        return (
-            "### Executive summary\n\n"
-            "No validation findings were returned by the configured rules.\n\n"
-            "### Main data quality risks\n\n"
-            "No issues were flagged in this run. This does not guarantee "
-            "that every field is correct or complete.\n\n"
-            "### Recommended actions\n\n"
-            "- Review whether the configured rules cover the intended use.\n"
-            "- Confirm important records against authoritative sources.\n\n"
-            "### Limitations and human review\n\n"
-            "The report uses deterministic fallback logic because AI "
-            "insight generation was unavailable."
+    statistical_analysis = report.get("statistical_analysis", {})
+    overview = statistical_analysis.get("dataset_overview", {})
+
+    missing_cells = overview.get("total_missing_cells", 0)
+    duplicate_rows = overview.get("duplicate_row_count", 0)
+
+    if total_issues == 0:
+        quality_assessment = (
+            "No issues were detected by the current validation rules. "
+            "This does not guarantee that every value is correct or that "
+            "all business requirements have been satisfied."
         )
-
-    high_rules = [
-        item for item in rules
-        if item["severity_breakdown"].get("HIGH", 0) > 0
-    ]
-    duplicate_count = evidence["verified_rule_breakdown"].get(
-        "potential_duplicate_company", 0
-    )
+    else:
+        quality_assessment = (
+            f"The validator detected {total_issues} findings affecting "
+            f"{affected_records} records. Review the findings before "
+            "using the dataset for reporting or downstream analysis."
+        )
 
     lines = [
-        "### Executive summary",
+        "# AI-Powered Data Quality Report",
         "",
-        f"The validation process examined {totals['total_records']} records "
-        f"and flagged {totals['affected_records']} records for review. "
-        f"It recorded {totals['total_issues']} findings. These are rule-based "
-        "flags, not confirmed errors. Resolve material issues before relying "
-        "on the affected data for business decisions.",
+        "## 1. Dataset Overview",
         "",
-        "### Main data quality risks",
+        f"- **Dataset:** {report.get('dataset_name', 'dataset.csv')}",
+        f"- **Records:** {total_records}",
+        f"- **Columns:** {total_columns}",
+        f"- **Detected findings:** {total_issues}",
+        f"- **Affected records:** {affected_records}",
+        f"- **Missing cells:** {missing_cells}",
+        f"- **Duplicate rows:** {duplicate_rows}",
+        "",
+        "## 2. Quality Assessment",
+        "",
+        quality_assessment,
+        "",
+        "## 3. Findings by Severity",
         "",
     ]
 
-    if duplicate_count:
-        lines.append(
-            "Potential duplicate company names may affect entity matching, "
-            "record counts, and downstream analysis. Duplicate flags do not "
-            "prove that records represent the same business."
-        )
-
-    if high_rules:
-        lines.append(
-            "High-severity findings need prompt verification, particularly "
-            "missing or invalid values that could affect company profiling "
-            "and analytical results."
-        )
-
-    for item in rules:
-        lines.append(
-            f"- **{item['rule']}**: {item['finding_count']} finding(s)."
-        )
+    if severity:
+        for level, count in severity.items():
+            lines.append(f"- **{level}:** {count}")
+    else:
+        lines.append("- No findings were recorded.")
 
     lines.extend([
         "",
-        "### Recommended investigation and corrective actions",
+        "## 4. Findings by Rule",
         "",
     ])
 
-    for item in sorted(
-        rules,
-        key=lambda rule: (
-            -rule["severity_breakdown"].get("HIGH", 0),
-            -rule["finding_count"],
-            rule["rule"],
-        ),
-    ):
-        action = RULE_ACTIONS.get(
-            item["rule"],
-            "Review the evidence against an authoritative source before "
-            "approving any correction.",
-        )
-        lines.append(f"- **{item['rule']}** — {action}")
+    if rules:
+        for rule, count in rules.items():
+            lines.append(f"- **{rule}:** {count}")
+    else:
+        lines.append("- No rule violations were detected.")
 
     lines.extend([
         "",
-        "### Limitations and human review",
+        "## 5. Recommended Actions",
         "",
-        "Business impact cannot be quantified from these validation flags "
-        "alone. Verify suspected issues with source owners, retain an audit "
-        "trail, and rerun validation after approved corrections. This report "
-        "uses deterministic fallback logic because AI insight generation "
-        "was unavailable.",
+        "1. Investigate columns with a high percentage of missing values.",
+        "2. Review duplicate records and confirm whether they are legitimate.",
+        "3. Check unusual numeric values against the context of the dataset.",
+        "4. Review constant columns to determine whether they are useful.",
+        "5. Confirm the detected issues against the dataset's business rules.",
+        "6. Re-run validation after correcting the identified problems.",
         "",
-        f"Severity breakdown: {json.dumps(severity, sort_keys=True)}.",
+        "## 6. Limitations",
+        "",
+        "These findings are based on general-purpose data quality rules. "
+        "The validator does not automatically know the meaning of every "
+        "column, the expected value ranges, or the business rules governing "
+        "the dataset. Statistical outliers are indicators for review, not "
+        "proof of incorrect data.",
     ])
 
     return "\n".join(lines)
 
 
 def generate_insights(state: AgentState) -> dict:
-    """Generate evidence-grounded business insights with a safe fallback."""
-    evidence = build_evidence_summary(state["validation_report"])
-    cloud_enabled = bool(os.getenv("OLLAMA_API_KEY"))
-    model = CLOUD_MODEL if cloud_enabled else LOCAL_MODEL
-    source = f"Ollama Cloud ({model})" if cloud_enabled else f"Local Ollama ({model})"
+    """Generate AI insights when available, otherwise use fallback insights."""
 
-    prompt = f"""
-You are a business data quality analyst writing for business stakeholders.
+    report = state.get("validation_report", {})
+    evidence = build_evidence_summary(report)
 
-Use only the Python-verified evidence below:
-{json.dumps(evidence, indent=2)}
+    fallback_report = create_fallback_insights(report, evidence)
 
-Write a concise report with these exact Markdown headings:
-### Executive summary
-### Main data quality risks
-### Potential business impact
-### Recommended investigation and corrective actions
-### Limitations and items requiring human review
+    api_key = os.getenv("OLLAMA_API_KEY")
+    model = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
 
-Requirements:
-- Explain what the findings could mean for company profiling, reporting,
-  entity matching, and analytical decisions, where relevant.
-- Prioritize high-severity findings and provide actions tied to each rule.
-- Explain that potential duplicate names require verification before merging.
-- Do not claim that flagged records are definitely wrong.
-- Do not invent financial losses, causes, company facts, or outcomes.
-- Do not invent counts, percentages, or statistics; refer to rule names
-  instead of restating numerical summaries.
-- State when business impact cannot be determined from the evidence.
-- Recommend source verification and an audit trail before corrections.
-- Use clear business language, preferably under 250 words.
-"""
+    if not api_key:
+        return {
+            "evidence_summary": evidence,
+            "ai_insights": fallback_report,
+            "ai_status": "fallback",
+            "report_source": "deterministic_fallback",
+        }
 
     try:
-        response = chat(
+        from ollama import Client
+
+        client = Client(
+            host="https://ollama.com",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+
+        prompt = f"""
+You are a data quality analyst reviewing an arbitrary CSV dataset.
+
+Use only the evidence provided below. Do not invent column meanings,
+business rules, causes, or findings. Clearly distinguish detected issues
+from potential risks and recommendations.
+
+Dataset evidence:
+{evidence}
+
+Write a concise Markdown report containing:
+1. Executive summary
+2. Main data quality concerns
+3. Findings by severity and rule
+4. Columns or patterns that deserve further investigation
+5. Prioritized recommendations
+6. Limitations and assumptions
+
+Explain that statistical outliers are not necessarily errors.
+If there are no detected issues, explain what the current checks cover
+and what they do not guarantee.
+"""
+
+        response = client.chat(
             model=model,
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "You explain verified data quality evidence "
-                        "conservatively. Never invent findings, company "
-                        "facts, numerical claims, causes, or outcomes."
+                        "You are a careful, evidence-based data quality "
+                        "analyst. Analyze any dataset without assuming "
+                        "it contains company data. Never fabricate facts."
                     ),
                 },
                 {"role": "user", "content": prompt},
             ],
-            options={"temperature": 0.1},
         )
-        insights = response_text(response)
+
+        insights = response["message"]["content"].strip()
 
         if not insights:
-            raise ValueError("The model returned an empty response.")
+            raise ValueError("The AI service returned an empty response.")
 
         return {
             "evidence_summary": evidence,
             "ai_insights": insights,
             "ai_status": "success",
-            "report_source": source,
+            "report_source": "ollama_cloud",
         }
 
     except Exception as exc:
-        print(f"AI insight generation failed: {type(exc).__name__}: {exc}")
+        print(f"AI insight generation failed: {exc}")
+
         return {
             "evidence_summary": evidence,
-            "ai_insights": build_fallback_insights(evidence),
+            "ai_insights": fallback_report,
             "ai_status": "fallback",
-            "report_source": "Deterministic fallback; AI unavailable",
+            "report_source": "deterministic_fallback",
         }
 
 
 def save_report(state: AgentState) -> dict:
-    """Save verified statistics separately from generated explanations."""
-    report = state["validation_report"]
-    verified_summary = {
-        "total_records": report["total_records"],
-        "total_issues": report["total_issues"],
-        "affected_records": report["affected_records"],
-        "issues_by_severity": report["issues_by_severity"],
-        "issues_by_rule": report["issues_by_rule"],
-    }
+    """Save the generated report as a Markdown file."""
 
-    summary_json = json.dumps(verified_summary, indent=2)
-    evidence_json = json.dumps(state["evidence_summary"], indent=2)
-    ai_status = state.get("ai_status", "unknown")
-    report_source = state.get("report_source", "Unknown")
+    insights = state.get("ai_insights", "")
+    evidence = state.get("evidence_summary", {})
 
-    final_report = (
-        "# Business Data Quality Assessment\n\n"
-        "## Verified Validation Summary\n\n"
-        "Statistics calculated by Python using the configured validation rules.\n\n"
-        f"```json\n{summary_json}\n```\n\n"
-        "## Rule-Level Evidence\n\n"
-        "Evidence grouped by Python from the validation findings.\n\n"
-        f"```json\n{evidence_json}\n```\n\n"
-        "## Business Assessment\n\n"
-        f"**Report source:** {report_source}  \n"
-        f"**AI status:** {ai_status}\n\n"
-        f"{state['ai_insights']}\n\n"
+    report_content = (
+        f"{insights}\n\n"
         "---\n\n"
-        "**Important:** Findings are rule-based flags, not necessarily "
-        "confirmed errors. Python calculates the validation statistics; "
-        "the language model explains the supplied evidence when available. "
-        "Verify records before making changes.\n"
+        "## Validation Metadata\n\n"
+        f"- AI status: {state.get('ai_status', 'unknown')}\n"
+        f"- Report source: {state.get('report_source', 'unknown')}\n"
+        f"- Dataset: {evidence.get('dataset_name', 'dataset.csv')}\n"
     )
 
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_PATH.write_text(final_report, encoding="utf-8")
-    print(f"Report saved to: {REPORT_PATH}")
+    REPORT_PATH.write_text(report_content, encoding="utf-8")
 
-    return {"final_report": final_report}
-
-
-builder = StateGraph(AgentState)
-builder.add_node("validate_data", validate_data)
-builder.add_node("generate_insights", generate_insights)
-builder.add_node("save_report", save_report)
-builder.add_edge(START, "validate_data")
-builder.add_edge("validate_data", "generate_insights")
-builder.add_edge("generate_insights", "save_report")
-builder.add_edge("save_report", END)
-
-agent = builder.compile()
+    return {"final_report": report_content}
 
 
-if __name__ == "__main__":
-    result = agent.invoke({})
-    print(result["final_report"])
-    print(f"\nAI status: {result.get('ai_status', 'unknown')}")
-    print("LangGraph workflow completed successfully.")
+workflow = StateGraph(AgentState)
+
+workflow.add_node("validate_data", validate_data)
+workflow.add_node("generate_insights", generate_insights)
+workflow.add_node("save_report", save_report)
+
+workflow.set_entry_point("validate_data")
+workflow.add_edge("validate_data", "generate_insights")
+workflow.add_edge("generate_insights", "save_report")
+workflow.add_edge("save_report", END)
+
+agent = workflow.compile()
