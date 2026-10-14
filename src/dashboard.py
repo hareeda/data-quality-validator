@@ -303,8 +303,10 @@ with header_col:
     )
 
 with help_col:
+    st.write("")
     if st.button(
-        "❔ Help & Guide",
+        "❔ Help Guide",
+        key="header_help_button",
         use_container_width=True,
     ):
         show_help_dialog()
