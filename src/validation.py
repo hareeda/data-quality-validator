@@ -1,7 +1,7 @@
 
 import json
 from pathlib import Path
-
+from src.statistical_analysis import analyze_dataset
 import pandas as pd
 
 
@@ -109,6 +109,7 @@ def validate_companies(file_path=DATA_PATH):
             if not issue_df.empty else {}
         ),
         "issues": issues,
+        "statistical_analysis": analyze_dataset(df),
     }
 
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)

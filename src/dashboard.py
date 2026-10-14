@@ -231,6 +231,68 @@ if result:
             high_count,
         )
 
+        # ---------- Statistical analysis ----------
+
+    st.divider()
+    st.subheader("Statistical analysis")
+
+    statistical = summary.get("statistical_analysis", {})
+
+    if statistical:
+        overview = statistical.get("overview", {})
+
+        st.markdown("**Dataset statistics**")
+
+        stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
+
+        with stat_col1:
+            st.metric("Rows", overview.get("rows", 0))
+
+        with stat_col2:
+            st.metric("Columns", overview.get("columns", 0))
+
+        with stat_col3:
+            st.metric("Missing cells", overview.get("missing_cells", 0))
+
+        with stat_col4:
+            st.metric("Duplicate rows", overview.get("duplicate_rows", 0))
+
+        numeric_stats = statistical.get("numeric_summary", [])
+
+        if numeric_stats:
+            st.markdown("**Numeric field statistics**")
+            st.dataframe(
+                pd.DataFrame(numeric_stats),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        column_stats = statistical.get("column_profiles", [])
+
+        if column_stats:
+            st.markdown("**Column profiles**")
+            st.dataframe(
+                pd.DataFrame(column_stats),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        correlations = statistical.get("correlations", {})
+
+        if correlations:
+            st.markdown("**Correlation analysis**")
+            st.dataframe(
+                pd.DataFrame(correlations),
+                use_container_width=True,
+            )
+
+    else:
+        st.info(
+            "Statistical analysis is not available. "
+            "Confirm that the backend returns statistical_analysis."
+        )
+
+
     rule_counts = summary.get("issues_by_rule", {})
 
     st.caption(
