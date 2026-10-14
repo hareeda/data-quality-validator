@@ -6,7 +6,7 @@ import requests
 import streamlit as st
 
 
-DEFAULT_API_URL = "http://127.0.0.1:8000"
+DEFAULT_API_URL = "https://ai-data-quality-validator-api.onrender.com"
 
 
 st.set_page_config(
