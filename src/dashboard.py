@@ -6,6 +6,10 @@ import requests
 import streamlit as st
 
 
+# --------------------------------------------------
+# Configuration
+# --------------------------------------------------
+
 DEFAULT_API_URL = (
     "https://ai-data-quality-validator-api.onrender.com"
 )
@@ -14,31 +18,263 @@ API_URL = os.getenv("API_URL", DEFAULT_API_URL).rstrip("/")
 MAX_FILE_SIZE = 10 * 1024 * 1024
 
 st.set_page_config(
-    page_title="AI Data Quality Validator",
-    page_icon="🔎",
+    page_title="Data Quality Studio",
+    page_icon="◈",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 
-def format_number(value):
-    """Format numeric values for dashboard display."""
-    if value is None:
-        return "N/A"
+# --------------------------------------------------
+# Professional styling
+# --------------------------------------------------
 
-    try:
-        if pd.isna(value):
-            return "N/A"
-    except (TypeError, ValueError):
-        pass
+st.markdown(
+    """
+    <style>
+    @import url(
+        'https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap'
+    );
 
-    if isinstance(value, (int, float)):
-        return f"{value:,.2f}" if isinstance(value, float) else f"{value:,}"
+    :root {
+        --navy: #172B4D;
+        --teal: #0D9488;
+        --muted: #64748B;
+        --line: #E2E8F0;
+        --surface: #FFFFFF;
+        --background: #F6F8FB;
+    }
 
-    return str(value)
+    html, body, [class*="css"] {
+        font-family: 'DM Sans', sans-serif;
+    }
 
+    .stApp {
+        background: var(--background);
+    }
+
+    .block-container {
+        max-width: 1500px;
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+    }
+
+    [data-testid="stSidebar"] {
+        background: #FFFFFF;
+        border-right: 1px solid var(--line);
+    }
+
+    [data-testid="stSidebar"] .block-container {
+        padding-top: 1.5rem;
+    }
+
+    .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 1.5rem;
+    }
+
+    .brand-mark {
+        background: var(--navy);
+        color: #FFFFFF;
+        width: 42px;
+        height: 42px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        font-weight: 700;
+    }
+
+    .brand-name {
+        font-size: 17px;
+        font-weight: 700;
+        color: var(--navy);
+        line-height: 1.3;
+    }
+
+    .brand-subtitle {
+        color: var(--muted);
+        font-size: 11px;
+        margin-top: 3px;
+    }
+
+    .eyebrow {
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--teal);
+        margin-bottom: 8px;
+    }
+
+    .page-title {
+        color: var(--navy);
+        font-size: clamp(27px, 3vw, 38px);
+        font-weight: 700;
+        line-height: 1.2;
+        letter-spacing: -1px;
+        margin: 0;
+    }
+
+    .page-description {
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.7;
+        margin-top: 10px;
+        max-width: 760px;
+    }
+
+    .section-heading {
+        color: var(--navy);
+        font-size: 20px;
+        font-weight: 700;
+        margin-top: 12px;
+        margin-bottom: 4px;
+    }
+
+    .section-description {
+        color: var(--muted);
+        font-size: 13px;
+        margin-bottom: 18px;
+    }
+
+    .upload-panel {
+        background: #FFFFFF;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 22px 24px;
+        margin: 22px 0;
+    }
+
+    .upload-title {
+        color: var(--navy);
+        font-size: 18px;
+        font-weight: 700;
+        margin-bottom: 5px;
+    }
+
+    .upload-description {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.6;
+    }
+
+    .status-pill {
+        display: inline-block;
+        border-radius: 20px;
+        padding: 5px 11px;
+        font-size: 12px;
+        font-weight: 600;
+        background: #E6F6F2;
+        color: #087F70;
+    }
+
+    .status-neutral {
+        background: #EDF2F7;
+        color: #475569;
+    }
+
+    .status-warning {
+        background: #FFF4DB;
+        color: #946200;
+    }
+
+    .result-note {
+        color: var(--muted);
+        font-size: 13px;
+        margin: 4px 0 15px;
+    }
+
+    div[data-testid="stMetric"] {
+        background: #FFFFFF;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 18px 20px;
+        min-height: 118px;
+    }
+
+    div[data-testid="stMetricLabel"] {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 500;
+    }
+
+    div[data-testid="stMetricValue"] {
+        color: var(--navy);
+        font-size: 30px;
+        font-weight: 700;
+    }
+
+    div[data-testid="stTabs"] button {
+        font-weight: 600;
+    }
+
+    div[data-testid="stDataFrame"] {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        overflow: hidden;
+    }
+
+    div[data-testid="stFileUploader"] {
+        background: #F8FAFC;
+        border-radius: 12px;
+    }
+
+    .footer {
+        border-top: 1px solid var(--line);
+        margin-top: 42px;
+        padding-top: 18px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.7;
+    }
+
+    div.stButton > button[kind="primary"] {
+        background: var(--navy);
+        border: 1px solid var(--navy);
+        border-radius: 9px;
+        font-weight: 600;
+        min-height: 44px;
+    }
+
+    div.stButton > button[kind="primary"]:hover {
+        background: var(--teal);
+        border-color: var(--teal);
+    }
+
+    .stDownloadButton button {
+        border-radius: 9px;
+        font-weight: 600;
+    }
+
+    @media (max-width: 768px) {
+        .block-container {
+            padding: 1rem;
+        }
+
+        .page-title {
+            font-size: 28px;
+        }
+
+        div[data-testid="stMetric"] {
+            padding: 12px;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# --------------------------------------------------
+# API functions
+# --------------------------------------------------
 
 def api_health():
-    """Check whether the API is reachable."""
+    """Check the FastAPI service."""
     try:
         response = requests.get(
             f"{API_URL}/health",
@@ -53,7 +289,7 @@ def api_health():
 
 
 def submit_csv(uploaded_file):
-    """Send a CSV upload to the FastAPI backend."""
+    """Upload a CSV and retrieve its analysis."""
     try:
         response = requests.post(
             f"{API_URL}/upload-csv",
@@ -69,23 +305,34 @@ def submit_csv(uploaded_file):
 
         if not response.ok:
             try:
-                detail = response.json().get("detail", response.text)
+                detail = response.json().get(
+                    "detail",
+                    response.text,
+                )
             except ValueError:
                 detail = response.text
 
-            return None, f"API error ({response.status_code}): {detail}"
+            return None, (
+                f"API error ({response.status_code}): {detail}"
+            )
 
         result = response.json()
 
         if not isinstance(result, dict):
-            return None, "The API returned an unexpected response format."
+            return None, "The API returned an unexpected response."
+
+        if result.get("status") == "error":
+            return None, result.get(
+                "message",
+                "The dataset could not be analyzed.",
+            )
 
         return result, None
 
     except requests.Timeout:
         return None, (
             "The request timed out. The API may be starting up or "
-            "processing the dataset. Please try again."
+            "processing your dataset. Please try again."
         )
     except requests.RequestException as exc:
         return None, f"Could not connect to the API: {exc}"
@@ -93,65 +340,107 @@ def submit_csv(uploaded_file):
         return None, "The API returned an invalid JSON response."
 
 
-def render_overview(summary):
-    """Display high-level validation metrics."""
-    columns = st.columns(4)
+# --------------------------------------------------
+# Display helpers
+# --------------------------------------------------
 
+def section_header(title, description=None):
+    """Render a consistent section heading."""
+    st.markdown(
+        f'<div class="section-heading">{title}</div>',
+        unsafe_allow_html=True,
+    )
+
+    if description:
+        st.markdown(
+            f'<div class="section-description">'
+            f'{description}</div>',
+            unsafe_allow_html=True,
+        )
+
+
+def format_number(value):
+    """Format numeric values for display."""
+    if value is None:
+        return "N/A"
+
+    try:
+        if pd.isna(value):
+            return "N/A"
+    except (TypeError, ValueError):
+        pass
+
+    if isinstance(value, (int, float)):
+        return f"{value:,.2f}" if isinstance(value, float) else f"{value:,}"
+
+    return str(value)
+
+
+def render_overview(summary):
+    """Render the main KPI cards."""
     metrics = [
-        ("Records", summary.get("total_records", 0)),
+        ("Total records", summary.get("total_records", 0)),
         ("Columns", summary.get("total_columns", 0)),
-        ("Findings", summary.get("total_issues", 0)),
+        ("Quality findings", summary.get("total_issues", 0)),
         ("Affected records", summary.get("affected_records", 0)),
     ]
+
+    columns = st.columns(4)
 
     for column, (label, value) in zip(columns, metrics):
         column.metric(label, format_number(value))
 
 
 def render_severity(summary):
-    """Display issue counts by severity."""
-    st.subheader("Findings by severity")
+    section_header(
+        "Findings by severity",
+        "Understand the distribution of detected data quality issues.",
+    )
 
     severity = summary.get("issues_by_severity") or {}
 
     if not isinstance(severity, dict) or not severity:
-        st.info("No validation findings were recorded.")
+        st.info("No severity findings are available.")
         return
 
-    severity_df = pd.DataFrame(
+    df = pd.DataFrame(
         [
-            {"Severity": level, "Count": count}
+            {"Severity": str(level), "Count": count}
             for level, count in severity.items()
         ]
     )
 
-    st.bar_chart(severity_df.set_index("Severity"), y="Count")
+    st.bar_chart(df.set_index("Severity"), y="Count")
 
 
 def render_rules(summary):
-    """Display issue counts by validation rule."""
-    st.subheader("Findings by validation rule")
+    section_header(
+        "Validation rule breakdown",
+        "See which quality checks generated the most findings.",
+    )
 
     rules = summary.get("issues_by_rule") or {}
 
     if not isinstance(rules, dict) or not rules:
-        st.info("No validation rules produced findings.")
+        st.info("No rule violations were recorded.")
         return
 
-    rules_df = pd.DataFrame(
+    df = pd.DataFrame(
         [
-            {"Rule": rule, "Count": count}
+            {"Rule": str(rule), "Findings": count}
             for rule, count in rules.items()
         ]
-    ).sort_values("Count", ascending=False)
+    ).sort_values("Findings", ascending=False)
 
-    st.bar_chart(rules_df.set_index("Rule"), y="Count")
-    st.dataframe(rules_df, use_container_width=True, hide_index=True)
+    st.bar_chart(df.set_index("Rule"), y="Findings")
+    st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 def render_dataset_overview(statistics):
-    """Display generic dataset statistics."""
-    st.subheader("Dataset statistics")
+    section_header(
+        "Dataset statistics",
+        "A snapshot of completeness, duplication, and storage footprint.",
+    )
 
     overview = statistics.get("dataset_overview") or {}
 
@@ -171,45 +460,49 @@ def render_dataset_overview(statistics):
         column.metric(label, value)
 
 
-def normalize_top_values(top_values):
-    """Convert different top-values formats into a displayable DataFrame."""
-    if top_values is None:
+def normalize_top_values(values):
+    """Normalize common top-values formats for display."""
+    if values is None:
         return pd.DataFrame()
 
-    if isinstance(top_values, dict):
-        if not top_values:
+    if isinstance(values, dict):
+        if not values:
             return pd.DataFrame()
 
         return pd.DataFrame(
             [
                 {"Value": str(value), "Count": count}
-                for value, count in top_values.items()
+                for value, count in values.items()
             ]
         )
 
-    if isinstance(top_values, list):
-        if not top_values:
+    if isinstance(values, list):
+        if not values:
             return pd.DataFrame()
 
-        if all(isinstance(item, dict) for item in top_values):
-            return pd.DataFrame(top_values)
+        if all(isinstance(item, dict) for item in values):
+            return pd.DataFrame(values)
 
         rows = []
 
-        for item in top_values:
-            if isinstance(item, (list, tuple)) and len(item) == 2:
-                rows.append({"Value": str(item[0]), "Count": item[1]})
+        for item in values:
+            if isinstance(item, (tuple, list)) and len(item) == 2:
+                rows.append(
+                    {"Value": str(item[0]), "Count": item[1]}
+                )
             else:
                 rows.append({"Value": str(item)})
 
         return pd.DataFrame(rows)
 
-    return pd.DataFrame({"Value": [str(top_values)]})
+    return pd.DataFrame({"Value": [str(values)]})
 
 
 def render_column_profiles(statistics):
-    """Display profiles for every dataset column."""
-    st.subheader("Column profiles")
+    section_header(
+        "Column profiles",
+        "Inspect data types, missing values, uniqueness, and numeric statistics.",
+    )
 
     profiles = statistics.get("columns") or []
 
@@ -217,12 +510,19 @@ def render_column_profiles(statistics):
         st.info("No column profiles are available.")
         return
 
+    valid_profiles = [
+        profile
+        for profile in profiles
+        if isinstance(profile, dict)
+    ]
+
+    if not valid_profiles:
+        st.info("No usable column profiles were returned.")
+        return
+
     profile_rows = []
 
-    for profile in profiles:
-        if not isinstance(profile, dict):
-            continue
-
+    for profile in valid_profiles:
         row = {
             "Column": profile.get("column", ""),
             "Data type": profile.get("data_type", ""),
@@ -234,72 +534,68 @@ def render_column_profiles(statistics):
             "Unique %": profile.get("unique_percent", 0),
         }
 
-        numeric_stats = profile.get("statistics") or {}
+        numeric = profile.get("statistics") or {}
 
-        if isinstance(numeric_stats, dict) and numeric_stats:
+        if isinstance(numeric, dict) and numeric:
             row.update({
-                "Mean": numeric_stats.get("mean"),
-                "Median": numeric_stats.get("median"),
-                "Minimum": numeric_stats.get("min"),
-                "Maximum": numeric_stats.get("max"),
-                "Outliers (IQR)": numeric_stats.get("outlier_count_iqr"),
+                "Mean": numeric.get("mean"),
+                "Median": numeric.get("median"),
+                "Minimum": numeric.get("min"),
+                "Maximum": numeric.get("max"),
+                "Outliers (IQR)": numeric.get("outlier_count_iqr"),
             })
 
-        date_stats = profile.get("date_statistics") or {}
+        dates = profile.get("date_statistics") or {}
 
-        if isinstance(date_stats, dict) and date_stats:
-            row["Earliest date"] = date_stats.get("min")
-            row["Latest date"] = date_stats.get("max")
+        if isinstance(dates, dict) and dates:
+            row["Earliest date"] = dates.get("min")
+            row["Latest date"] = dates.get("max")
 
         profile_rows.append(row)
 
-    if not profile_rows:
-        st.info("No usable column profiles were returned.")
-        return
-
-    profile_df = pd.DataFrame(profile_rows)
-
     st.dataframe(
-        profile_df,
+        pd.DataFrame(profile_rows),
         use_container_width=True,
         hide_index=True,
     )
 
     available_profiles = [
         profile
-        for profile in profiles
-        if isinstance(profile, dict) and profile.get("column") is not None
+        for profile in valid_profiles
+        if profile.get("column") is not None
     ]
 
     if not available_profiles:
         return
 
+    st.markdown("#### Explore an individual column")
+
     selected_column = st.selectbox(
-        "Explore a column",
-        options=[profile["column"] for profile in available_profiles],
+        "Select a column",
+        options=[p["column"] for p in available_profiles],
     )
 
-    selected_profile = next(
+    selected = next(
         (
-            profile
-            for profile in available_profiles
-            if profile.get("column") == selected_column
+            p for p in available_profiles
+            if p.get("column") == selected_column
         ),
         None,
     )
 
-    if selected_profile:
+    if selected:
         with st.expander(
-            f"Detailed profile: {selected_column}",
+            f"Detailed profile — {selected_column}",
             expanded=True,
         ):
-            st.json(selected_profile)
+            st.json(selected)
 
-            top_values = selected_profile.get("top_values")
-            top_values_df = normalize_top_values(top_values)
+            top_values_df = normalize_top_values(
+                selected.get("top_values")
+            )
 
             if not top_values_df.empty:
-                st.write("Most frequent values")
+                st.markdown("#### Most frequent values")
                 st.dataframe(
                     top_values_df,
                     use_container_width=True,
@@ -308,8 +604,10 @@ def render_column_profiles(statistics):
 
 
 def render_correlations(statistics):
-    """Display numeric correlations when available."""
-    st.subheader("Numeric correlations")
+    section_header(
+        "Numeric correlations",
+        "Explore relationships between numeric variables, when available.",
+    )
 
     correlations = statistics.get("numeric_correlations") or {}
 
@@ -317,87 +615,91 @@ def render_correlations(statistics):
         st.info("No numeric correlations are available for this dataset.")
         return
 
-    correlation_df = pd.DataFrame(correlations)
+    df = pd.DataFrame(correlations)
 
-    if correlation_df.empty:
+    if df.empty:
         st.info("No correlation data is available.")
         return
 
-    st.dataframe(correlation_df, use_container_width=True)
+    st.dataframe(df, use_container_width=True)
 
 
 def render_issues(issues):
-    """Display detailed validation findings."""
-    st.subheader("Detailed validation findings")
+    section_header(
+        "Validation findings",
+        "Filter and investigate individual data quality issues.",
+    )
 
     if not issues:
         st.success(
             "No findings were detected by the current validation rules."
         )
         st.caption(
-            "This does not guarantee that all values are correct or "
-            "that every business rule has been checked."
+            "This does not guarantee that every value is correct "
+            "or that all business rules have been checked."
         )
         return
 
-    issues_df = pd.DataFrame(issues)
+    df = pd.DataFrame(issues)
 
-    if issues_df.empty:
+    if df.empty:
         st.info("No detailed findings are available.")
         return
 
     filter_columns = st.columns(2)
 
     severity_options = (
-        sorted(issues_df["severity"].dropna().unique().tolist())
-        if "severity" in issues_df.columns
+        sorted(df["severity"].dropna().unique().tolist())
+        if "severity" in df.columns
         else []
     )
 
     rule_options = (
-        sorted(issues_df["rule"].dropna().unique().tolist())
-        if "rule" in issues_df.columns
+        sorted(df["rule"].dropna().unique().tolist())
+        if "rule" in df.columns
         else []
     )
 
     selected_severity = filter_columns[0].multiselect(
-        "Filter by severity",
+        "Severity",
         options=severity_options,
         default=severity_options,
     )
 
     selected_rules = filter_columns[1].multiselect(
-        "Filter by rule",
+        "Validation rule",
         options=rule_options,
         default=rule_options,
     )
 
-    filtered_df = issues_df.copy()
+    filtered = df.copy()
 
-    if "severity" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["severity"].isin(selected_severity)
+    if "severity" in filtered.columns:
+        filtered = filtered[
+            filtered["severity"].isin(selected_severity)
         ]
 
-    if "rule" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["rule"].isin(selected_rules)
+    if "rule" in filtered.columns:
+        filtered = filtered[
+            filtered["rule"].isin(selected_rules)
         ]
 
     st.caption(
-        f"Showing {len(filtered_df):,} of {len(issues_df):,} findings."
+        f"Displaying {len(filtered):,} of {len(df):,} findings."
     )
 
     st.dataframe(
-        filtered_df,
+        filtered,
         use_container_width=True,
         hide_index=True,
     )
 
 
 def render_report(report):
-    """Show and allow downloading the generated Markdown report."""
-    st.subheader("Quality report")
+    section_header(
+        "Quality assessment report",
+        "Review the generated findings and recommended next steps.",
+    )
 
     if not report:
         st.info("No report content was returned.")
@@ -406,54 +708,113 @@ def render_report(report):
     st.markdown(report)
 
     st.download_button(
-        label="Download quality report",
+        label="Download report (.md)",
         data=report,
         file_name="data_quality_report.md",
         mime="text/markdown",
     )
 
 
-st.title("🔎 AI-Powered Data Quality Validator")
-
-st.markdown(
-    """
-Upload a CSV dataset to identify potential data quality problems,
-explore statistical profiles, and generate actionable recommendations.
-
-**Works with general-purpose tabular datasets** — no fixed company
-schema is required.
-"""
-)
+# --------------------------------------------------
+# Sidebar
+# --------------------------------------------------
 
 with st.sidebar:
-    st.header("Configuration")
-    st.write("API endpoint")
-    st.code(API_URL)
+    st.markdown(
+        """
+        <div class="brand">
+            <div class="brand-mark">◈</div>
+            <div>
+                <div class="brand-name">Data Quality Studio</div>
+                <div class="brand-subtitle">AI-POWERED ANALYTICS</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    if st.button("Check API health", use_container_width=True):
-        with st.spinner("Checking API connection..."):
+    st.divider()
+
+    st.markdown("**System status**")
+    st.caption("Backend API")
+
+    if st.button("Check connection", use_container_width=True):
+        with st.spinner("Checking connection..."):
             healthy, details = api_health()
 
         if healthy:
-            st.success("API is reachable.")
+            st.success("API connected")
             st.json(details)
         else:
-            st.error("API is unavailable.")
+            st.error("API unavailable")
             st.caption(str(details))
 
     st.divider()
-    st.caption("Maximum upload size: 10 MB")
+
+    st.markdown("**Configuration**")
+    st.caption("API endpoint")
+    st.code(API_URL, language=None)
+    st.caption("Maximum CSV size: 10 MB")
+
+    st.divider()
+
+    st.caption(
+        "General-purpose data quality analysis for tabular datasets."
+    )
+
+
+# --------------------------------------------------
+# Main page header
+# --------------------------------------------------
+
+st.markdown(
+    '<div class="eyebrow">DATA INTELLIGENCE PLATFORM</div>',
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    '<h1 class="page-title">Data Quality Overview</h1>',
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    """
+    <div class="page-description">
+        Assess dataset quality, uncover inconsistencies, explore statistical
+        patterns, and generate actionable recommendations from your CSV data.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# --------------------------------------------------
+# Upload panel
+# --------------------------------------------------
+
+st.markdown(
+    """
+    <div class="upload-panel">
+        <div class="upload-title">Analyze a dataset</div>
+        <div class="upload-description">
+            Upload a CSV file to run validation checks and statistical profiling.
+            No fixed column names or company-specific schema are required.
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 uploaded_file = st.file_uploader(
     "Choose a CSV file",
     type=["csv"],
-    help="Upload a CSV file containing the dataset you want to analyze.",
+    help="Maximum supported file size is 10 MB.",
 )
 
 if uploaded_file is not None:
     st.caption(
-        f"Selected file: {uploaded_file.name} "
-        f"({uploaded_file.size:,} bytes)"
+        f"Selected file: {uploaded_file.name} · "
+        f"{uploaded_file.size:,} bytes"
     )
 
     if uploaded_file.size == 0:
@@ -464,12 +825,12 @@ if uploaded_file is not None:
 
     else:
         if st.button(
-            "Analyze dataset",
+            "Run data quality analysis",
             type="primary",
             use_container_width=True,
         ):
             with st.spinner(
-                "Validating the dataset and generating insights..."
+                "Analyzing the dataset. This may take a little while..."
             ):
                 result, error = submit_csv(uploaded_file)
 
@@ -478,7 +839,12 @@ if uploaded_file is not None:
             else:
                 st.session_state["analysis_result"] = result
                 st.session_state["analysis_filename"] = uploaded_file.name
-                st.success("Dataset analysis completed successfully!")
+                st.success("Analysis completed successfully.")
+
+
+# --------------------------------------------------
+# Results
+# --------------------------------------------------
 
 if "analysis_result" in st.session_state:
     result = st.session_state["analysis_result"]
@@ -489,25 +855,46 @@ if "analysis_result" in st.session_state:
     report = result.get("report", "")
     evidence = result.get("evidence") or {}
 
+    filename = st.session_state.get(
+        "analysis_filename",
+        result.get("dataset_name", "Dataset"),
+    )
+
     st.divider()
 
-    st.header(
-        f"Results: {st.session_state.get('analysis_filename', 'Dataset')}"
+    st.markdown(
+        f'<div class="eyebrow">ANALYSIS RESULTS</div>'
+        f'<h2 style="color:#172B4D; margin-top:0;">'
+        f'{filename}</h2>',
+        unsafe_allow_html=True,
     )
 
     ai_status = result.get("ai_status", "unknown")
 
     if ai_status == "success":
-        st.success("AI-generated insights are available.")
-
+        st.markdown(
+            '<span class="status-pill">AI insights generated</span>',
+            unsafe_allow_html=True,
+        )
     elif ai_status == "fallback":
-        st.warning(
-            "The deterministic report is displayed because AI insights "
-            "were unavailable. Validation results are still available."
+        st.markdown(
+            '<span class="status-pill status-warning">'
+            'Rule-based report displayed</span>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "AI insights were unavailable; validation results remain available."
+        )
+    else:
+        st.markdown(
+            f'<span class="status-pill status-neutral">'
+            f'Insight status: {ai_status}</span>',
+            unsafe_allow_html=True,
         )
 
-    else:
-        st.info(f"Insight generation status: {ai_status}")
+    st.write("")
+
+    render_overview(summary)
 
     tabs = st.tabs([
         "Overview",
@@ -518,13 +905,15 @@ if "analysis_result" in st.session_state:
     ])
 
     with tabs[0]:
-        render_overview(summary)
         render_severity(summary)
+        st.divider()
         render_rules(summary)
+        st.divider()
         render_dataset_overview(statistics)
 
     with tabs[1]:
         render_column_profiles(statistics)
+        st.divider()
         render_correlations(statistics)
 
     with tabs[2]:
@@ -534,13 +923,39 @@ if "analysis_result" in st.session_state:
         render_report(report)
 
     with tabs[4]:
-        st.subheader("Evidence summary")
+        section_header(
+            "Analysis evidence",
+            "Supporting summary used to produce the quality assessment.",
+        )
+
         st.json(evidence)
 
         notes = statistics.get("notes") or []
 
         if notes:
-            st.subheader("Analysis notes")
-
+            st.markdown("#### Statistical analysis notes")
             for note in notes:
                 st.write(f"- {note}")
+
+else:
+    st.info(
+        "Upload a CSV file above and run an analysis to view your results here."
+    )
+
+
+# --------------------------------------------------
+# Footer
+# --------------------------------------------------
+
+st.markdown(
+    """
+    <div class="footer">
+        <strong>Data Quality Studio</strong> · AI-powered data quality analysis
+        <br>
+        Findings are based on configured validation rules and statistical
+        checks. Review unusual values in the context of your dataset before
+        treating them as errors.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
