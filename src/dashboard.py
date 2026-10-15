@@ -10,10 +10,8 @@ DEFAULT_API_URL = (
     "https://ai-data-quality-validator-api.onrender.com"
 )
 
-API_URL = os.getenv(
-    "API_URL",
-    DEFAULT_API_URL,
-).rstrip("/")
+API_URL = os.getenv("API_URL", DEFAULT_API_URL).rstrip("/")
+MAX_FILE_SIZE = 10 * 1024 * 1024
 
 st.set_page_config(
     page_title="AI Data Quality Validator",
@@ -33,11 +31,8 @@ def format_number(value):
     except (TypeError, ValueError):
         pass
 
-    if isinstance(value, float):
-        return f"{value:,.2f}"
-
-    if isinstance(value, int):
-        return f"{value:,}"
+    if isinstance(value, (int, float)):
+        return f"{value:,.2f}" if isinstance(value, float) else f"{value:,}"
 
     return str(value)
 
@@ -47,12 +42,14 @@ def api_health():
     try:
         response = requests.get(
             f"{API_URL}/health",
-            timeout=15,
+            timeout=60,
         )
         response.raise_for_status()
         return True, response.json()
     except requests.RequestException as exc:
         return False, str(exc)
+    except ValueError as exc:
+        return False, f"Invalid health response: {exc}"
 
 
 def submit_csv(uploaded_file):
@@ -67,26 +64,28 @@ def submit_csv(uploaded_file):
                     "text/csv",
                 )
             },
-            timeout=180,
+            timeout=(15, 240),
         )
 
         if not response.ok:
             try:
-                detail = response.json().get(
-                    "detail",
-                    response.text,
-                )
+                detail = response.json().get("detail", response.text)
             except ValueError:
                 detail = response.text
 
             return None, f"API error ({response.status_code}): {detail}"
 
-        return response.json(), None
+        result = response.json()
+
+        if not isinstance(result, dict):
+            return None, "The API returned an unexpected response format."
+
+        return result, None
 
     except requests.Timeout:
         return None, (
-            "The analysis request timed out. The API may be starting up "
-            "or processing a large dataset. Please try again."
+            "The request timed out. The API may be starting up or "
+            "processing the dataset. Please try again."
         )
     except requests.RequestException as exc:
         return None, f"Could not connect to the API: {exc}"
@@ -113,9 +112,9 @@ def render_severity(summary):
     """Display issue counts by severity."""
     st.subheader("Findings by severity")
 
-    severity = summary.get("issues_by_severity", {})
+    severity = summary.get("issues_by_severity") or {}
 
-    if not severity:
+    if not isinstance(severity, dict) or not severity:
         st.info("No validation findings were recorded.")
         return
 
@@ -126,19 +125,16 @@ def render_severity(summary):
         ]
     )
 
-    st.bar_chart(
-        severity_df.set_index("Severity"),
-        y="Count",
-    )
+    st.bar_chart(severity_df.set_index("Severity"), y="Count")
 
 
 def render_rules(summary):
     """Display issue counts by validation rule."""
     st.subheader("Findings by validation rule")
 
-    rules = summary.get("issues_by_rule", {})
+    rules = summary.get("issues_by_rule") or {}
 
-    if not rules:
+    if not isinstance(rules, dict) or not rules:
         st.info("No validation rules produced findings.")
         return
 
@@ -157,7 +153,7 @@ def render_dataset_overview(statistics):
     """Display generic dataset statistics."""
     st.subheader("Dataset statistics")
 
-    overview = statistics.get("dataset_overview", {})
+    overview = statistics.get("dataset_overview") or {}
 
     metrics = [
         ("Duplicate rows", overview.get("duplicate_row_count", 0)),
@@ -175,11 +171,47 @@ def render_dataset_overview(statistics):
         column.metric(label, value)
 
 
+def normalize_top_values(top_values):
+    """Convert different top-values formats into a displayable DataFrame."""
+    if top_values is None:
+        return pd.DataFrame()
+
+    if isinstance(top_values, dict):
+        if not top_values:
+            return pd.DataFrame()
+
+        return pd.DataFrame(
+            [
+                {"Value": str(value), "Count": count}
+                for value, count in top_values.items()
+            ]
+        )
+
+    if isinstance(top_values, list):
+        if not top_values:
+            return pd.DataFrame()
+
+        if all(isinstance(item, dict) for item in top_values):
+            return pd.DataFrame(top_values)
+
+        rows = []
+
+        for item in top_values:
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                rows.append({"Value": str(item[0]), "Count": item[1]})
+            else:
+                rows.append({"Value": str(item)})
+
+        return pd.DataFrame(rows)
+
+    return pd.DataFrame({"Value": [str(top_values)]})
+
+
 def render_column_profiles(statistics):
     """Display profiles for every dataset column."""
     st.subheader("Column profiles")
 
-    profiles = statistics.get("columns", [])
+    profiles = statistics.get("columns") or []
 
     if not profiles:
         st.info("No column profiles are available.")
@@ -188,6 +220,9 @@ def render_column_profiles(statistics):
     profile_rows = []
 
     for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+
         row = {
             "Column": profile.get("column", ""),
             "Data type": profile.get("data_type", ""),
@@ -199,9 +234,9 @@ def render_column_profiles(statistics):
             "Unique %": profile.get("unique_percent", 0),
         }
 
-        numeric_stats = profile.get("statistics", {})
+        numeric_stats = profile.get("statistics") or {}
 
-        if numeric_stats:
+        if isinstance(numeric_stats, dict) and numeric_stats:
             row.update({
                 "Mean": numeric_stats.get("mean"),
                 "Median": numeric_stats.get("median"),
@@ -210,13 +245,17 @@ def render_column_profiles(statistics):
                 "Outliers (IQR)": numeric_stats.get("outlier_count_iqr"),
             })
 
-        date_stats = profile.get("date_statistics", {})
+        date_stats = profile.get("date_statistics") or {}
 
-        if date_stats:
+        if isinstance(date_stats, dict) and date_stats:
             row["Earliest date"] = date_stats.get("min")
             row["Latest date"] = date_stats.get("max")
 
         profile_rows.append(row)
+
+    if not profile_rows:
+        st.info("No usable column profiles were returned.")
+        return
 
     profile_df = pd.DataFrame(profile_rows)
 
@@ -226,15 +265,24 @@ def render_column_profiles(statistics):
         hide_index=True,
     )
 
+    available_profiles = [
+        profile
+        for profile in profiles
+        if isinstance(profile, dict) and profile.get("column") is not None
+    ]
+
+    if not available_profiles:
+        return
+
     selected_column = st.selectbox(
         "Explore a column",
-        options=[p.get("column", "") for p in profiles],
+        options=[profile["column"] for profile in available_profiles],
     )
 
     selected_profile = next(
         (
             profile
-            for profile in profiles
+            for profile in available_profiles
             if profile.get("column") == selected_column
         ),
         None,
@@ -247,18 +295,11 @@ def render_column_profiles(statistics):
         ):
             st.json(selected_profile)
 
-            top_values = selected_profile.get("top_values", {})
+            top_values = selected_profile.get("top_values")
+            top_values_df = normalize_top_values(top_values)
 
-            if top_values:
+            if not top_values_df.empty:
                 st.write("Most frequent values")
-
-                top_values_df = pd.DataFrame(
-                    [
-                        {"Value": value, "Count": count}
-                        for value, count in top_values.items()
-                    ]
-                )
-
                 st.dataframe(
                     top_values_df,
                     use_container_width=True,
@@ -270,20 +311,19 @@ def render_correlations(statistics):
     """Display numeric correlations when available."""
     st.subheader("Numeric correlations")
 
-    correlations = statistics.get("numeric_correlations", {})
+    correlations = statistics.get("numeric_correlations") or {}
 
-    if not correlations:
-        st.info(
-            "No numeric correlations are available for this dataset."
-        )
+    if not isinstance(correlations, dict) or not correlations:
+        st.info("No numeric correlations are available for this dataset.")
         return
 
     correlation_df = pd.DataFrame(correlations)
 
-    st.dataframe(
-        correlation_df,
-        use_container_width=True,
-    )
+    if correlation_df.empty:
+        st.info("No correlation data is available.")
+        return
+
+    st.dataframe(correlation_df, use_container_width=True)
 
 
 def render_issues(issues):
@@ -302,15 +342,23 @@ def render_issues(issues):
 
     issues_df = pd.DataFrame(issues)
 
+    if issues_df.empty:
+        st.info("No detailed findings are available.")
+        return
+
     filter_columns = st.columns(2)
 
-    severity_options = sorted(
-        issues_df["severity"].dropna().unique().tolist()
-    ) if "severity" in issues_df.columns else []
+    severity_options = (
+        sorted(issues_df["severity"].dropna().unique().tolist())
+        if "severity" in issues_df.columns
+        else []
+    )
 
-    rule_options = sorted(
-        issues_df["rule"].dropna().unique().tolist()
-    ) if "rule" in issues_df.columns else []
+    rule_options = (
+        sorted(issues_df["rule"].dropna().unique().tolist())
+        if "rule" in issues_df.columns
+        else []
+    )
 
     selected_severity = filter_columns[0].multiselect(
         "Filter by severity",
@@ -383,7 +431,8 @@ with st.sidebar:
     st.code(API_URL)
 
     if st.button("Check API health", use_container_width=True):
-        healthy, details = api_health()
+        with st.spinner("Checking API connection..."):
+            healthy, details = api_health()
 
         if healthy:
             st.success("API is reachable.")
@@ -409,8 +458,10 @@ if uploaded_file is not None:
 
     if uploaded_file.size == 0:
         st.error("The selected file is empty.")
-    elif uploaded_file.size > 10 * 1024 * 1024:
+
+    elif uploaded_file.size > MAX_FILE_SIZE:
         st.error("The maximum supported file size is 10 MB.")
+
     else:
         if st.button(
             "Analyze dataset",
@@ -432,11 +483,11 @@ if uploaded_file is not None:
 if "analysis_result" in st.session_state:
     result = st.session_state["analysis_result"]
 
-    summary = result.get("summary", {})
-    statistics = summary.get("statistical_analysis", {})
-    issues = result.get("issues", [])
+    summary = result.get("summary") or {}
+    statistics = summary.get("statistical_analysis") or {}
+    issues = result.get("issues") or []
     report = result.get("report", "")
-    evidence = result.get("evidence", {})
+    evidence = result.get("evidence") or {}
 
     st.divider()
 
@@ -448,11 +499,13 @@ if "analysis_result" in st.session_state:
 
     if ai_status == "success":
         st.success("AI-generated insights are available.")
+
     elif ai_status == "fallback":
         st.warning(
             "The deterministic report is displayed because AI insights "
             "were unavailable. Validation results are still available."
         )
+
     else:
         st.info(f"Insight generation status: {ai_status}")
 
@@ -484,9 +537,10 @@ if "analysis_result" in st.session_state:
         st.subheader("Evidence summary")
         st.json(evidence)
 
-        notes = statistics.get("notes", [])
+        notes = statistics.get("notes") or []
 
         if notes:
             st.subheader("Analysis notes")
+
             for note in notes:
                 st.write(f"- {note}")
